@@ -378,9 +378,16 @@ export function BarChart({
     }, {})
   }, [categories, colors])
 
+  const { onClick, ...containerProps } = props;
+
   return (
-    <ChartContainer className={className} config={config} {...props}>
-      <RechartsPrimitive.BarChart data={data} className="h-full w-full">
+    <ChartContainer className={className} config={config} {...containerProps}>
+      <RechartsPrimitive.BarChart 
+        data={data} 
+        className="h-full w-full"
+        onClick={onClick}
+        {...props}
+      >
         <RechartsPrimitive.XAxis
           dataKey={index}
           stroke="#888888"
@@ -447,9 +454,16 @@ export function LineChart({
     }, {})
   }, [categories, colors])
 
+  const { onClick, ...containerProps } = props;
+
   return (
-    <ChartContainer className={className} config={config} {...props}>
-      <RechartsPrimitive.LineChart data={data} className="h-full w-full">
+    <ChartContainer className={className} config={config} {...containerProps}>
+      <RechartsPrimitive.LineChart 
+        data={data} 
+        className="h-full w-full"
+        onClick={onClick}
+        {...props}
+      >
         <RechartsPrimitive.XAxis
           dataKey={index}
           stroke="#888888"
