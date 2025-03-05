@@ -353,6 +353,38 @@ function getPayloadConfigFromPayload(
     : config[key as keyof typeof config]
 }
 
+const RECHARTS_EVENT_HANDLERS = [
+  'onClick',
+  'onMouseDown',
+  'onMouseUp',
+  'onMouseMove',
+  'onMouseOver',
+  'onMouseEnter',
+  'onMouseLeave',
+  'onMouseOut',
+  'onTouchStart',
+  'onTouchMove',
+  'onTouchEnd'
+] as const;
+
+type RechartsEventHandlerName = typeof RECHARTS_EVENT_HANDLERS[number];
+
+// Helper function to separate Recharts event handlers from other props
+function separateEventHandlers<T extends Record<string, any>>(props: T) {
+  const eventHandlers: Partial<Record<RechartsEventHandlerName, any>> = {};
+  const otherProps: Record<string, any> = {};
+
+  Object.keys(props).forEach(key => {
+    if (RECHARTS_EVENT_HANDLERS.includes(key as RechartsEventHandlerName)) {
+      eventHandlers[key as RechartsEventHandlerName] = props[key];
+    } else {
+      otherProps[key] = props[key];
+    }
+  });
+
+  return { eventHandlers, otherProps };
+}
+
 export function BarChart({
   data,
   index,
@@ -378,15 +410,15 @@ export function BarChart({
     }, {})
   }, [categories, colors])
 
-  const { onClick, ...containerProps } = props;
+  // Separate Recharts event handlers from standard DOM props
+  const { eventHandlers, otherProps } = separateEventHandlers(props);
 
   return (
-    <ChartContainer className={className} config={config} {...containerProps}>
+    <ChartContainer className={className} config={config} {...otherProps}>
       <RechartsPrimitive.BarChart 
         data={data} 
         className="h-full w-full"
-        onClick={onClick}
-        {...props}
+        {...eventHandlers}
       >
         <RechartsPrimitive.XAxis
           dataKey={index}
@@ -454,15 +486,15 @@ export function LineChart({
     }, {})
   }, [categories, colors])
 
-  const { onClick, ...containerProps } = props;
+  // Separate Recharts event handlers from standard DOM props
+  const { eventHandlers, otherProps } = separateEventHandlers(props);
 
   return (
-    <ChartContainer className={className} config={config} {...containerProps}>
+    <ChartContainer className={className} config={config} {...otherProps}>
       <RechartsPrimitive.LineChart 
         data={data} 
         className="h-full w-full"
-        onClick={onClick}
-        {...props}
+        {...eventHandlers}
       >
         <RechartsPrimitive.XAxis
           dataKey={index}
