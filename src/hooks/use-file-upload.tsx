@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -38,6 +39,18 @@ export function useFileUpload() {
     }
   };
   
+  const createUploadJob = async (file: File): Promise<UploadJob> => {
+    const fileType = await detectFileType(file);
+    return {
+      id: uuidv4(),
+      fileName: file.name,
+      status: "queued",
+      progress: 0,
+      fileType,
+      createdAt: new Date()
+    };
+  };
+  
   const uploadFiles = async (files: File[], projectId: string) => {
     if (!projectId) {
       toast.error("Please select a project before uploading");
@@ -47,14 +60,8 @@ export function useFileUpload() {
     setIsUploading(true);
     
     // Create job entries for each file
-    const newJobs: UploadJob[] = files.map(file => ({
-      id: uuidv4(),
-      fileName: file.name,
-      status: "queued",
-      progress: 0,
-      fileType: await detectFileType(file),
-      createdAt: new Date()
-    }));
+    const jobPromises = Array.from(files).map(file => createUploadJob(file));
+    const newJobs = await Promise.all(jobPromises);
     
     setJobs(prev => [...prev, ...newJobs]);
     
