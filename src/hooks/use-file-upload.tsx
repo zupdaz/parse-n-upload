@@ -3,23 +3,10 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import { UploadJob } from "@/components/UploadProgress";
-import { 
-  parseFileContent, 
-  DissolutionResult, 
-  ParticleSizeResult 
-} from "@/utils/fileParsers";
-
-export interface ParsedResult {
-  id: string;
-  fileName: string;
-  fileType: "dissolution" | "particle";
-  data: DissolutionResult | ParticleSizeResult;
-}
 
 export function useFileUpload() {
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const [parsedResults, setParsedResults] = useState<ParsedResult[]>([]);
   
   // More accurate file type detection based on content
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
@@ -81,7 +68,6 @@ export function useFileUpload() {
     // Process each file one by one (simulating a queue)
     for (let i = 0; i < newJobs.length; i++) {
       const job = newJobs[i];
-      const file = files[i];
       
       // Update job status to processing
       setJobs(prev => 
@@ -96,22 +82,6 @@ export function useFileUpload() {
         // Simulate file upload process with progress updates
         await simulateFileUpload(job.id);
         
-        // Actual file parsing
-        const result = await parseFileContent(file);
-        
-        if (result && job.fileType) {
-          // Store the parsed result
-          setParsedResults(prev => [
-            ...prev, 
-            { 
-              id: job.id, 
-              fileName: file.name, 
-              fileType: job.fileType as "dissolution" | "particle",
-              data: result 
-            }
-          ]);
-        }
-        
         // Update job status to completed
         setJobs(prev => 
           prev.map(j => 
@@ -121,7 +91,7 @@ export function useFileUpload() {
           )
         );
       } catch (error) {
-        // Handle parsing failures
+        // Simulate occasional failures
         setJobs(prev => 
           prev.map(j => 
             j.id === job.id 
@@ -171,29 +141,18 @@ export function useFileUpload() {
   
   // Clear completed jobs
   const clearCompletedJobs = () => {
-    const completedJobIds = jobs
-      .filter(job => job.status === "completed" || job.status === "failed")
-      .map(job => job.id);
-    
     setJobs(prev => prev.filter(job => 
       job.status !== "completed" && job.status !== "failed"
     ));
-    
-    // Also clear the parsed results for completed jobs
-    setParsedResults(prev => 
-      prev.filter(result => !completedJobIds.includes(result.id))
-    );
   };
   
   // Clear all jobs
   const clearAllJobs = () => {
     setJobs([]);
-    setParsedResults([]);
   };
   
   return {
     jobs,
-    parsedResults,
     isUploading,
     uploadFiles,
     clearCompletedJobs,
