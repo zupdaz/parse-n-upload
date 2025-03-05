@@ -4,7 +4,6 @@ import { AppLayout } from "@/layouts/AppLayout";
 import { ProjectSelector } from "@/components/ProjectSelector";
 import { FileUploader } from "@/components/FileUploader";
 import { UploadProgress } from "@/components/UploadProgress";
-import { StatsSection } from "@/components/StatsSection";
 import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
 import useFileUpload from "@/hooks/use-file-upload";
 import { Button } from "@/components/ui/button";
@@ -18,17 +17,14 @@ import {
 import { Separator } from "@/components/ui/separator";
 import {
   Trash2,
-  LayoutDashboard,
-  Upload,
-  RefreshCw,
   Check,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 
 const Index = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const { jobs, isUploading, uploadFiles, clearCompletedJobs, clearAllJobs } = useFileUpload();
-  const [showStats, setShowStats] = useState(false);
 
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -67,15 +63,6 @@ const Index = () => {
             </div>
             <div className="flex items-center space-x-2">
               <SampleFilesDownloader />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowStats(!showStats)}
-                className="h-9"
-              >
-                {showStats ? <Upload className="mr-2 h-4 w-4" /> : <LayoutDashboard className="mr-2 h-4 w-4" />}
-                {showStats ? "Upload Files" : "View Stats"}
-              </Button>
               {jobs.length > 0 && (
                 <Button
                   variant="outline"
@@ -103,56 +90,52 @@ const Index = () => {
           <Separator />
         </section>
 
-        {showStats ? (
-          <StatsSection />
-        ) : (
-          <div className="grid gap-6 md:grid-cols-12">
-            <Card className="md:col-span-5 lg:col-span-4">
-              <CardHeader>
-                <CardTitle>Project Selection</CardTitle>
-                <CardDescription>
-                  Choose a project to upload files to
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ProjectSelector onProjectSelect={handleProjectSelect} />
-              </CardContent>
-            </Card>
-            
-            <Card className="md:col-span-7 lg:col-span-8">
-              <CardHeader>
-                <CardTitle>File Upload</CardTitle>
-                <CardDescription>
-                  Upload CSV, XLSX, or XLSM files for processing
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <FileUploader
-                  projectId={selectedProjectId}
-                  onFilesSelected={handleFilesSelected}
-                  disabled={isUploading}
-                />
-                
-                {isUploading && (
-                  <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground animate-pulse">
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>Processing files...</span>
-                  </div>
-                )}
-                
-                {jobs.length > 0 && (
-                  <>
-                    <Separator />
-                    <UploadProgress
-                      jobs={jobs}
-                      onComplete={handleUploadComplete}
-                    />
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+        <div className="grid gap-6 md:grid-cols-12">
+          <Card className="md:col-span-5 lg:col-span-4">
+            <CardHeader>
+              <CardTitle>Project Selection</CardTitle>
+              <CardDescription>
+                Choose a project to upload files to
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ProjectSelector onProjectSelect={handleProjectSelect} />
+            </CardContent>
+          </Card>
+          
+          <Card className="md:col-span-7 lg:col-span-8">
+            <CardHeader>
+              <CardTitle>File Upload</CardTitle>
+              <CardDescription>
+                Upload CSV, XLSX, or XLSM files for processing
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <FileUploader
+                projectId={selectedProjectId}
+                onFilesSelected={handleFilesSelected}
+                disabled={isUploading}
+              />
+              
+              {isUploading && (
+                <div className="flex items-center justify-center space-x-2 text-sm text-muted-foreground animate-pulse">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>Processing files...</span>
+                </div>
+              )}
+              
+              {jobs.length > 0 && (
+                <>
+                  <Separator />
+                  <UploadProgress
+                    jobs={jobs}
+                    onComplete={handleUploadComplete}
+                  />
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </AppLayout>
   );
