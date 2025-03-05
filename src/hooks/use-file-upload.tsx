@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -8,9 +7,35 @@ export function useFileUpload() {
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   
-  // Simulate file type detection
-  const detectFileType = (file: File): "dissolution" | "particle" | undefined => {
-    return Math.random() > 0.5 ? "dissolution" : "particle";
+  // More accurate file type detection based on content
+  const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
+    try {
+      // Read first few lines of the file
+      const chunk = await file.slice(0, 500).text();
+      const firstLines = chunk.split('\n').slice(0, 2).join(' ').toLowerCase();
+      
+      // Look for keywords to identify file type
+      if (firstLines.includes('vessel') || firstLines.includes('time point')) {
+        return "dissolution";
+      } else if (firstLines.includes('batch') || firstLines.includes('particle') || 
+                 firstLines.includes('d10') || firstLines.includes('d50') || 
+                 firstLines.includes('d90')) {
+        return "particle";
+      }
+      
+      // If can't detect from content, make a guess based on name
+      if (file.name.toLowerCase().includes('diss')) {
+        return "dissolution";
+      } else if (file.name.toLowerCase().includes('part') || file.name.toLowerCase().includes('size')) {
+        return "particle";
+      }
+      
+      // Default fallback
+      return Math.random() > 0.5 ? "dissolution" : "particle";
+    } catch (error) {
+      console.error("Error detecting file type:", error);
+      return Math.random() > 0.5 ? "dissolution" : "particle";
+    }
   };
   
   const uploadFiles = async (files: File[], projectId: string) => {
@@ -27,7 +52,7 @@ export function useFileUpload() {
       fileName: file.name,
       status: "queued",
       progress: 0,
-      fileType: detectFileType(file),
+      fileType: await detectFileType(file),
       createdAt: new Date()
     }));
     

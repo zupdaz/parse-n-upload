@@ -5,6 +5,7 @@ import { ProjectSelector } from "@/components/ProjectSelector";
 import { FileUploader } from "@/components/FileUploader";
 import { UploadProgress } from "@/components/UploadProgress";
 import { StatsSection } from "@/components/StatsSection";
+import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
 import useFileUpload from "@/hooks/use-file-upload";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,6 +66,7 @@ const Index = () => {
               </p>
             </div>
             <div className="flex items-center space-x-2">
+              <SampleFilesDownloader />
               <Button
                 variant="outline"
                 size="sm"
