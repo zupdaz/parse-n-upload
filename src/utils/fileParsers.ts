@@ -20,6 +20,9 @@ export interface ParticleData {
   volumeMean?: number;
   submicronPercent?: number;
   timestamp?: string;
+  methodShort?: string;
+  trial?: string;
+  intermediateForm?: string;
 }
 
 export interface ParseResult<T> {
@@ -143,9 +146,41 @@ export const parseDissolutionData = (content: string): ParseResult<DissolutionDa
   }
 };
 
+// Helper regex functions for particle size parsing
+const extractMethodShort = (value: string): [string | null, string] => {
+  const pattern = /^(M[0-9][;,:]?)(.*)/;
+  const match = value.match(pattern);
+  if (match) {
+    // Remove any punctuation from the end of the method string and strip whitespace
+    return [match[1].replace(/[;,:]$/, ''), match[2].trim()];
+  }
+  return [null, value];
+};
+
+const extractTrial = (label: string): [string, string] => {
+  const pattern = /([^, ]+)[, ]?(.*)/;
+  const match = label.match(pattern);
+  if (match) {
+    return [match[1], match[2].trim()];
+  }
+  return [label, ''];
+};
+
+const extractTrialWithoutLetter = (s: string): string => {
+  const pattern = /([A-Z]{3}\d{2}-\d[A-Z]\d{0,2})/i;
+  const match = s.match(pattern);
+  return match ? match[1] : s;
+};
+
 // Parse particle size data with enhanced capabilities
 export const parseParticleData = (content: string): ParseResult<ParticleData> => {
   try {
+    // Check if this might be a tab-delimited UTF-16 file in Mastersizer format
+    if (content.includes('\t') && 
+        (content.includes('Comment 1') || content.includes('Comment 2'))) {
+      return parseMastersizerData(content);
+    }
+    
     const rows = parseCSV(content);
     
     // Check if file is empty or has too few rows
@@ -158,7 +193,7 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
     
     // Define possible column names for each required field
     const columnMappings = {
-      batch: ['batch', 'sample', 'id', 'identifier', 'sample id', 'batch id', 'batch number'],
+      batch: ['batch', 'sample', 'id', 'identifier', 'sample id', 'batch id', 'batch number', 'label', 'label_ou_sr', 'mra_no'],
       d10: ['d10', 'd(0.1)', 'd(v,0.1)', 'd[v,0.1]', 'dv10', 'd 10%', 'd10%'],
       d50: ['d50', 'd(0.5)', 'd(v,0.5)', 'd[v,0.5]', 'dv50', 'median', 'd 50%', 'd50%'],
       d90: ['d90', 'd(0.9)', 'd(v,0.9)', 'd[v,0.9]', 'dv90', 'd 90%', 'd90%'],
@@ -167,13 +202,16 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
       uniformity: ['uniformity', 'unif', 'u'],
       volumeMean: ['mean', 'volume mean', 'mean diameter', 'avg', 'average', 'd[4,3]', 'd(4,3)'],
       submicron: ['<1μm', '<1um', 'submicron', 'percent<1um', '%<1μm', '%<1um', 'percent < 1um'],
-      timestamp: ['date', 'time', 'datetime', 'timestamp', 'measured on', 'date measured']
+      timestamp: ['date', 'time', 'datetime', 'timestamp', 'measured on', 'date measured'],
+      methodShort: ['method', 'method_short', 'test method'],
+      trial: ['trial', 'trial id'],
+      intermediateForm: ['intermediate', 'intermediate_form', 'form']
     };
     
     // Find column indices for each field
     const columnIndices: Record<string, number> = {};
     
-    // Find best matching column for each required field
+    // Find best matching column for each field
     for (const [field, possibleNames] of Object.entries(columnMappings)) {
       let foundIndex = -1;
       
@@ -259,8 +297,8 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
             };
           }
           
-          // Handle percentage values (strip % sign)
-          const numericStr = valueStr.replace('%', '');
+          // Handle percentage values (strip % sign) and comma decimal separator
+          const numericStr = valueStr.replace('%', '').replace(',', '.');
           const value = parseFloat(numericStr);
           
           if (isNaN(value) && required) {
@@ -273,6 +311,15 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
           }
           
           return isNaN(value) ? undefined : value;
+        };
+        
+        // Helper function to parse text fields
+        const parseTextField = (field: string): string | undefined => {
+          const index = columnIndices[field];
+          if (index === -1 || index >= row.length) {
+            return undefined;
+          }
+          return row[index] || undefined;
         };
         
         // Parse required fields
@@ -301,6 +348,39 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
           timestamp = row[columnIndices['timestamp']];
         }
         
+        // Parse additional fields from Python parser
+        let methodShort: string | undefined = undefined;
+        let trial: string | undefined = undefined;
+        let intermediateForm: string | undefined = undefined;
+        
+        // Get methodShort from column or extract from label
+        if (columnIndices['methodShort'] !== -1 && columnIndices['methodShort'] < row.length) {
+          methodShort = row[columnIndices['methodShort']];
+        } else if (batchId) {
+          const [extractedMethod] = extractMethodShort(batchId);
+          if (extractedMethod) methodShort = extractedMethod;
+        }
+        
+        // Get trial from column or extract from label
+        if (columnIndices['trial'] !== -1 && columnIndices['trial'] < row.length) {
+          trial = row[columnIndices['trial']];
+        } else if (batchId) {
+          const [extractedTrial] = extractTrial(batchId);
+          if (extractedTrial) {
+            trial = extractedTrial;
+            // Try to extract trial without letter if it matches the pattern
+            trial = extractTrialWithoutLetter(trial);
+          }
+        }
+        
+        // Get intermediateForm from column or extract from label
+        if (columnIndices['intermediateForm'] !== -1 && columnIndices['intermediateForm'] < row.length) {
+          intermediateForm = row[columnIndices['intermediateForm']];
+        } else if (batchId) {
+          const [_, extractedForm] = extractTrial(batchId);
+          if (extractedForm) intermediateForm = extractedForm;
+        }
+        
         // Create particle data entry
         const particleData: ParticleData = {
           batchId,
@@ -316,6 +396,9 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
         if (volumeMean !== undefined) particleData.volumeMean = volumeMean;
         if (submicronPercent !== undefined) particleData.submicronPercent = submicronPercent;
         if (timestamp) particleData.timestamp = timestamp;
+        if (methodShort) particleData.methodShort = methodShort;
+        if (trial) particleData.trial = trial;
+        if (intermediateForm) particleData.intermediateForm = intermediateForm;
         
         data.push(particleData);
       } catch (rowError: any) {
@@ -340,6 +423,164 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
         details: error.details || error.toString(),
         line: error.line,
         raw: error.raw
+      }
+    };
+  }
+};
+
+// Parse Mastersizer format files (similar to Python implementation)
+const parseMastersizerData = (content: string): ParseResult<ParticleData> => {
+  try {
+    // Split the content into lines
+    const lines = content.split('\n');
+    if (lines.length < 10) {
+      throw new Error("Mastersizer file has insufficient data");
+    }
+
+    // Find the blank rows that separate sections
+    const blankRowIndices: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].trim()) {
+        blankRowIndices.push(i);
+        if (blankRowIndices.length >= 2) break;
+      }
+    }
+
+    if (blankRowIndices.length < 2) {
+      throw new Error("Couldn't find the required blank rows in Mastersizer file");
+    }
+
+    // Extract the metadata section (table2 in Python)
+    const metadataSection = lines.slice(blankRowIndices[0] + 1, blankRowIndices[1]);
+    const metadataRows = metadataSection.map(line => line.split('\t').map(cell => cell.trim()));
+    
+    // Transpose the metadata
+    const metadata: Record<string, Record<string, string>> = {};
+    const metadataHeaders = metadataRows[0].slice(1); // Skip the first column
+    
+    for (let i = 1; i < metadataRows.length; i++) {
+      const row = metadataRows[i];
+      const rowName = row[0]; // First column is the row name
+      metadata[rowName] = {};
+      
+      for (let j = 1; j < row.length; j++) {
+        if (j < metadataHeaders.length + 1) {
+          metadata[rowName][metadataHeaders[j-1]] = row[j];
+        }
+      }
+    }
+
+    // Extract the data samples
+    const dataSection = lines.slice(blankRowIndices[1] + 2); // Skip blank row and header
+    const dataRows = dataSection
+      .filter(line => line.trim()) // Skip empty lines
+      .map(line => line.split('\t').map(cell => cell.trim()));
+    
+    // Process each sample in the data section
+    const data: ParticleData[] = [];
+    
+    if (dataRows.length === 0 || !metadata["Comment 2"]) {
+      throw new Error("Missing required data or Comment 2 metadata in Mastersizer file");
+    }
+    
+    // Find columns for d10, d50, d90
+    const d10Index = dataRows[0].findIndex(header => 
+      header.toLowerCase().includes('d(0.1)') || header.toLowerCase().includes('d[0.1]'));
+    const d50Index = dataRows[0].findIndex(header => 
+      header.toLowerCase().includes('d(0.5)') || header.toLowerCase().includes('d[0.5]'));
+    const d90Index = dataRows[0].findIndex(header => 
+      header.toLowerCase().includes('d(0.9)') || header.toLowerCase().includes('d[0.9]'));
+    const spanIndex = dataRows[0].findIndex(header => 
+      header.toLowerCase().includes('span'));
+    const ssaIndex = dataRows[0].findIndex(header => 
+      header.toLowerCase().includes('specific surface') || header.toLowerCase().includes('surface area'));
+    
+    if (d10Index === -1 || d50Index === -1 || d90Index === -1) {
+      throw new Error("Could not find required particle size distribution columns (d10, d50, d90)");
+    }
+    
+    // Extract sample data
+    for (const sampleName in metadata["Comment 2"]) {
+      if (!Object.prototype.hasOwnProperty.call(metadata["Comment 2"], sampleName)) continue;
+      
+      try {
+        const label = metadata["Comment 2"][sampleName];
+        
+        // Look for the corresponding row in data section
+        let sampleRow = null;
+        for (const row of dataRows.slice(1)) { // Skip header row
+          if (row.length > 1 && row[1] === sampleName) {
+            sampleRow = row;
+            break;
+          }
+        }
+        
+        if (!sampleRow) {
+          console.warn(`Couldn't find sample data for ${sampleName}`);
+          continue;
+        }
+        
+        // Parse the d values
+        const d10 = parseFloat(sampleRow[d10Index].replace(',', '.'));
+        const d50 = parseFloat(sampleRow[d50Index].replace(',', '.'));
+        const d90 = parseFloat(sampleRow[d90Index].replace(',', '.'));
+        
+        // Calculate or extract span
+        let span: number;
+        if (spanIndex !== -1 && sampleRow[spanIndex]) {
+          span = parseFloat(sampleRow[spanIndex].replace(',', '.'));
+        } else {
+          span = (d90 - d10) / d50;
+        }
+        
+        // Parse specific surface area if available
+        let specificSurface = 0;
+        if (ssaIndex !== -1 && sampleRow[ssaIndex]) {
+          specificSurface = parseFloat(sampleRow[ssaIndex].replace(',', '.'));
+        }
+        
+        // Apply label parsing from Python
+        const [methodShort, afterMethod] = extractMethodShort(label);
+        const [trial, intermediateForm] = extractTrial(afterMethod || label);
+        const extractedTrial = trial ? extractTrialWithoutLetter(trial) : undefined;
+        
+        // Create particle data
+        const particleData: ParticleData = {
+          batchId: label,
+          d10,
+          d50,
+          d90,
+          span,
+          specificSurface
+        };
+        
+        // Add the extracted metadata
+        if (methodShort) particleData.methodShort = methodShort;
+        if (extractedTrial) particleData.trial = extractedTrial;
+        if (intermediateForm) particleData.intermediateForm = intermediateForm;
+        
+        // Add sample to results
+        data.push(particleData);
+      } catch (sampleError: any) {
+        console.error(`Error processing sample: ${sampleError.message}`);
+        // Continue with other samples rather than failing completely
+      }
+    }
+    
+    if (data.length === 0) {
+      throw new Error("No valid particle size data found in Mastersizer file");
+    }
+    
+    return {
+      success: true,
+      data
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: {
+        message: error.message || "Failed to parse Mastersizer particle data",
+        details: error.details || error.toString()
       }
     };
   }

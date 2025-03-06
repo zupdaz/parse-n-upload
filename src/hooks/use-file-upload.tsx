@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -21,14 +22,20 @@ export function useFileUpload() {
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
       const chunk = await file.slice(0, 1500).text();
-      const lines = chunk.split('\n').slice(0, 5);
+      const lines = chunk.split('\n').slice(0, 10);
       const header = lines[0].toLowerCase();
+      
+      // Check for Mastersizer format (tab-delimited with specific column structure)
+      if (chunk.includes('\t') && (chunk.includes('Comment 1') || chunk.includes('Comment 2'))) {
+        return "particle";
+      }
       
       const particleSizePatterns = [
         'd10', 'd50', 'd90', 'd(0.1)', 'd(0.5)', 'd(0.9)',
         'd[v,0.1]', 'd[v,0.5]', 'd[v,0.9]',
         'span', 'surface area', 'specific surface',
-        'median', 'distribution', 'particle size'
+        'median', 'distribution', 'particle size',
+        'mastersizer', 'malvern', 'method_short', 'intermediate_form'
       ];
       
       const dissolutionPatterns = [
@@ -48,6 +55,17 @@ export function useFileUpload() {
         }
       }
       
+      // Look for blank rows followed by specific tables (Mastersizer structure)
+      let blankRowCount = 0;
+      for (let i = 0; i < lines.length && i < 10; i++) {
+        if (!lines[i].trim()) {
+          blankRowCount++;
+          if (blankRowCount >= 2) {
+            return "particle"; // Likely a Mastersizer file
+          }
+        }
+      }
+      
       const potentialTimePoints = lines.slice(1, 5).filter(line => {
         const cells = line.split(',');
         return cells.length > 2 && !isNaN(parseFloat(cells[0]));
@@ -62,7 +80,8 @@ export function useFileUpload() {
       } else if (
         file.name.toLowerCase().includes('part') || 
         file.name.toLowerCase().includes('size') ||
-        file.name.toLowerCase().includes('psd')
+        file.name.toLowerCase().includes('psd') ||
+        file.name.toLowerCase().includes('master')
       ) {
         return "particle";
       }
