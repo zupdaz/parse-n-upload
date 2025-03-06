@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -19,34 +18,59 @@ export function useFileUpload() {
   const [parseErrors, setParseErrors] = useState<ParseError[]>([]);
   const [currentError, setCurrentError] = useState<ParseError | null>(null);
   
-  // More accurate file type detection based on content
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
-      // Read first few lines of the file
-      const chunk = await file.slice(0, 500).text();
-      const firstLines = chunk.split('\n').slice(0, 2).join(' ').toLowerCase();
+      const chunk = await file.slice(0, 1500).text();
+      const lines = chunk.split('\n').slice(0, 5);
+      const header = lines[0].toLowerCase();
       
-      // Look for keywords to identify file type
-      if (firstLines.includes('vessel') || firstLines.includes('time point')) {
-        return "dissolution";
-      } else if (firstLines.includes('batch') || firstLines.includes('particle') || 
-                 firstLines.includes('d10') || firstLines.includes('d50') || 
-                 firstLines.includes('d90')) {
-        return "particle";
+      const particleSizePatterns = [
+        'd10', 'd50', 'd90', 'd(0.1)', 'd(0.5)', 'd(0.9)',
+        'd[v,0.1]', 'd[v,0.5]', 'd[v,0.9]',
+        'span', 'surface area', 'specific surface',
+        'median', 'distribution', 'particle size'
+      ];
+      
+      const dissolutionPatterns = [
+        'vessel', 'time point', 'timepoint', 'dissolution',
+        'rpm', 'paddle', 'basket', 'usp apparatus'
+      ];
+      
+      for (const pattern of particleSizePatterns) {
+        if (header.includes(pattern)) {
+          return "particle";
+        }
       }
       
-      // If can't detect from content, make a guess based on name
+      for (const pattern of dissolutionPatterns) {
+        if (header.includes(pattern)) {
+          return "dissolution";
+        }
+      }
+      
+      const potentialTimePoints = lines.slice(1, 5).filter(line => {
+        const cells = line.split(',');
+        return cells.length > 2 && !isNaN(parseFloat(cells[0]));
+      });
+      
+      if (potentialTimePoints.length >= 2) {
+        return "dissolution";
+      }
+      
       if (file.name.toLowerCase().includes('diss')) {
         return "dissolution";
-      } else if (file.name.toLowerCase().includes('part') || file.name.toLowerCase().includes('size')) {
+      } else if (
+        file.name.toLowerCase().includes('part') || 
+        file.name.toLowerCase().includes('size') ||
+        file.name.toLowerCase().includes('psd')
+      ) {
         return "particle";
       }
       
-      // Default fallback
-      return Math.random() > 0.5 ? "dissolution" : "particle";
+      return undefined;
     } catch (error) {
       console.error("Error detecting file type:", error);
-      return Math.random() > 0.5 ? "dissolution" : "particle";
+      return undefined;
     }
   };
   
@@ -71,7 +95,6 @@ export function useFileUpload() {
       } else if (fileType === "particle") {
         return parseParticleData(content);
       } else {
-        // Try both parsers if type is not determined
         const dissResult = parseDissolutionData(content);
         if (dissResult.success) {
           return dissResult;
@@ -82,7 +105,6 @@ export function useFileUpload() {
           return partResult;
         }
         
-        // If both fail, return the more detailed error
         return dissResult.error?.details.length > (partResult.error?.details.length || 0) 
           ? dissResult 
           : partResult;
@@ -107,18 +129,15 @@ export function useFileUpload() {
     setIsUploading(true);
     setParseErrors([]);
     
-    // Create job entries for each file
     const jobPromises = Array.from(files).map(file => createUploadJob(file));
     const newJobs = await Promise.all(jobPromises);
     
     setJobs(prev => [...prev, ...newJobs]);
     
-    // Process each file one by one (simulating a queue)
     for (let i = 0; i < newJobs.length; i++) {
       const job = newJobs[i];
       const file = files[i];
       
-      // Update job status to processing
       setJobs(prev => 
         prev.map(j => 
           j.id === job.id 
@@ -128,14 +147,11 @@ export function useFileUpload() {
       );
       
       try {
-        // Simulate file upload process with progress updates
         await simulateFileUpload(job.id);
         
-        // Try to parse the file
         const parseResult = await parseFile(file, job.fileType);
         
         if (parseResult.success) {
-          // Update job status to completed
           setJobs(prev => 
             prev.map(j => 
               j.id === job.id 
@@ -144,7 +160,6 @@ export function useFileUpload() {
             )
           );
         } else {
-          // Handle parse error
           const errorDetails: ParseError = {
             fileName: file.name,
             message: parseResult.error?.message || "Unknown parsing error",
@@ -155,7 +170,6 @@ export function useFileUpload() {
           
           setParseErrors(prev => [...prev, errorDetails]);
           
-          // Update job status to failed
           setJobs(prev => 
             prev.map(j => 
               j.id === job.id 
@@ -168,7 +182,6 @@ export function useFileUpload() {
             )
           );
           
-          // Show error toast with button to show details
           toast.error(`Failed to parse ${file.name}`, {
             description: "Click 'View Details' to see more information and report this issue.",
             action: {
@@ -179,7 +192,6 @@ export function useFileUpload() {
           });
         }
       } catch (error) {
-        // Simulate occasional failures
         setJobs(prev => 
           prev.map(j => 
             j.id === job.id 
@@ -198,19 +210,16 @@ export function useFileUpload() {
     toast.success(`Processed ${files.length} files`);
   };
   
-  // Simulate a file upload with progress updates
   const simulateFileUpload = async (jobId: string) => {
     const totalSteps = 10;
-    const successProbability = 0.9; // 90% chance of success
+    const successProbability = 0.9;
     
-    // Simulate random upload failures
     if (Math.random() > successProbability) {
       await new Promise(resolve => setTimeout(resolve, 500));
       throw new Error("Upload failed");
     }
     
     for (let step = 1; step <= totalSteps; step++) {
-      // Update progress
       const progress = Math.floor((step / totalSteps) * 100);
       
       setJobs(prev => 
@@ -221,20 +230,17 @@ export function useFileUpload() {
         )
       );
       
-      // Random delay between 200ms and 500ms
       const delay = Math.floor(Math.random() * 300) + 200;
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   };
   
-  // Clear completed jobs
   const clearCompletedJobs = () => {
     setJobs(prev => prev.filter(job => 
       job.status !== "completed" && job.status !== "failed"
     ));
   };
   
-  // Clear all jobs
   const clearAllJobs = () => {
     setJobs([]);
   };

@@ -1,4 +1,3 @@
-
 /**
  * Utility functions for parsing different types of data files
  */
@@ -17,6 +16,10 @@ export interface ParticleData {
   d90: number;
   span: number;
   specificSurface: number;
+  uniformity?: number;
+  volumeMean?: number;
+  submicronPercent?: number;
+  timestamp?: string;
 }
 
 export interface ParseResult<T> {
@@ -140,23 +143,66 @@ export const parseDissolutionData = (content: string): ParseResult<DissolutionDa
   }
 };
 
-// Parse particle size data
+// Parse particle size data with enhanced capabilities
 export const parseParticleData = (content: string): ParseResult<ParticleData> => {
   try {
     const rows = parseCSV(content);
     
-    // Validate header
-    const header = rows[0];
-    const requiredColumns = ['batch', 'd10', 'd50', 'd90', 'span', 'surface'];
+    // Check if file is empty or has too few rows
+    if (rows.length < 2) {
+      throw new Error("File is empty or has insufficient data rows");
+    }
     
+    // Extract header row and normalize column names for more flexible parsing
+    const header = rows[0].map(h => h.toLowerCase().trim());
+    
+    // Define possible column names for each required field
+    const columnMappings = {
+      batch: ['batch', 'sample', 'id', 'identifier', 'sample id', 'batch id', 'batch number'],
+      d10: ['d10', 'd(0.1)', 'd(v,0.1)', 'd[v,0.1]', 'dv10', 'd 10%', 'd10%'],
+      d50: ['d50', 'd(0.5)', 'd(v,0.5)', 'd[v,0.5]', 'dv50', 'median', 'd 50%', 'd50%'],
+      d90: ['d90', 'd(0.9)', 'd(v,0.9)', 'd[v,0.9]', 'dv90', 'd 90%', 'd90%'],
+      span: ['span', 'width', 'distribution width', 'spread'],
+      surface: ['surface', 'specific surface', 'specific surface area', 'ssa', 'surface area'],
+      uniformity: ['uniformity', 'unif', 'u'],
+      volumeMean: ['mean', 'volume mean', 'mean diameter', 'avg', 'average', 'd[4,3]', 'd(4,3)'],
+      submicron: ['<1μm', '<1um', 'submicron', 'percent<1um', '%<1μm', '%<1um', 'percent < 1um'],
+      timestamp: ['date', 'time', 'datetime', 'timestamp', 'measured on', 'date measured']
+    };
+    
+    // Find column indices for each field
     const columnIndices: Record<string, number> = {};
     
-    for (const required of requiredColumns) {
-      const index = header.findIndex(col => col.toLowerCase().includes(required));
-      if (index === -1) {
-        throw new Error(`Missing required column that contains '${required}' in header`);
+    // Find best matching column for each required field
+    for (const [field, possibleNames] of Object.entries(columnMappings)) {
+      let foundIndex = -1;
+      
+      // Try exact matches first
+      for (const name of possibleNames) {
+        const exactIndex = header.findIndex(col => col === name);
+        if (exactIndex !== -1) {
+          foundIndex = exactIndex;
+          break;
+        }
       }
-      columnIndices[required] = index;
+      
+      // If no exact match, try contains
+      if (foundIndex === -1) {
+        for (const name of possibleNames) {
+          const containsIndex = header.findIndex(col => col.includes(name));
+          if (containsIndex !== -1) {
+            foundIndex = containsIndex;
+            break;
+          }
+        }
+      }
+      
+      // For critical fields, throw error if not found
+      if (foundIndex === -1 && ['batch', 'd10', 'd50', 'd90'].includes(field)) {
+        throw new Error(`Required column for ${field} not found in header: ${header.join(', ')}`);
+      }
+      
+      columnIndices[field] = foundIndex;
     }
     
     // Parse data rows
@@ -167,42 +213,119 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
       if (row.length <= 1 || row.every(cell => cell === "")) continue; // Skip empty rows
       
       try {
-        const batchId = row[columnIndices['batch']];
+        // Extract batch ID (required)
+        const batchIdIndex = columnIndices['batch'];
+        if (batchIdIndex === -1 || batchIdIndex >= row.length) {
+          throw {
+            message: "Missing batch ID column",
+            details: `Row ${i} has no batch ID column identified`,
+            line: i,
+            raw: rows[i].join(',')
+          };
+        }
+        
+        const batchId = row[batchIdIndex];
         if (!batchId) {
           throw {
-            message: "Missing batch ID",
-            details: `Row ${i} has no batch ID`,
+            message: "Missing batch ID value",
+            details: `Row ${i} has empty batch ID`,
             line: i,
             raw: rows[i].join(',')
           };
         }
         
-        const d10 = parseFloat(row[columnIndices['d10']]);
-        const d50 = parseFloat(row[columnIndices['d50']]);
-        const d90 = parseFloat(row[columnIndices['d90']]);
-        const span = parseFloat(row[columnIndices['span']]);
-        const specificSurface = parseFloat(row[columnIndices['surface']]);
+        // Helper function to parse numeric values with validation
+        const parseNumericField = (field: string, required: boolean = true): number | undefined => {
+          const index = columnIndices[field];
+          if (index === -1 || index >= row.length) {
+            if (required) {
+              throw {
+                message: `Missing ${field} column`,
+                details: `Row ${i} has no ${field} column identified`,
+                line: i,
+                raw: rows[i].join(',')
+              };
+            }
+            return undefined;
+          }
+          
+          const valueStr = row[index];
+          if (!valueStr && required) {
+            throw {
+              message: `Missing ${field} value`,
+              details: `Row ${i} has empty ${field} value`,
+              line: i,
+              raw: rows[i].join(',')
+            };
+          }
+          
+          // Handle percentage values (strip % sign)
+          const numericStr = valueStr.replace('%', '');
+          const value = parseFloat(numericStr);
+          
+          if (isNaN(value) && required) {
+            throw {
+              message: `Invalid ${field} value`,
+              details: `Row ${i} has non-numeric ${field}: ${valueStr}`,
+              line: i,
+              raw: rows[i].join(',')
+            };
+          }
+          
+          return isNaN(value) ? undefined : value;
+        };
         
-        if (isNaN(d10) || isNaN(d50) || isNaN(d90) || isNaN(span) || isNaN(specificSurface)) {
-          throw {
-            message: "Invalid numeric value",
-            details: `Row ${i} has non-numeric values: d10=${row[columnIndices['d10']]}, d50=${row[columnIndices['d50']]}, d90=${row[columnIndices['d90']]}, span=${row[columnIndices['span']]}, specificSurface=${row[columnIndices['surface']]}`,
-            line: i,
-            raw: rows[i].join(',')
-          };
+        // Parse required fields
+        const d10 = parseNumericField('d10') as number;
+        const d50 = parseNumericField('d50') as number;
+        const d90 = parseNumericField('d90') as number;
+        
+        // Calculate span if not provided
+        let span: number;
+        if (columnIndices['span'] !== -1 && columnIndices['span'] < row.length) {
+          span = parseNumericField('span') as number;
+        } else {
+          // Calculate span from d10, d50, and d90
+          span = (d90 - d10) / d50;
         }
         
-        data.push({
+        // Parse optional fields
+        const specificSurface = parseNumericField('surface', false) || 0;
+        const uniformity = parseNumericField('uniformity', false);
+        const volumeMean = parseNumericField('volumeMean', false);
+        const submicronPercent = parseNumericField('submicron', false);
+        
+        // Parse timestamp if available
+        let timestamp: string | undefined = undefined;
+        if (columnIndices['timestamp'] !== -1 && columnIndices['timestamp'] < row.length) {
+          timestamp = row[columnIndices['timestamp']];
+        }
+        
+        // Create particle data entry
+        const particleData: ParticleData = {
           batchId,
           d10,
           d50,
           d90,
           span,
           specificSurface
-        });
+        };
+        
+        // Add optional fields if they exist
+        if (uniformity !== undefined) particleData.uniformity = uniformity;
+        if (volumeMean !== undefined) particleData.volumeMean = volumeMean;
+        if (submicronPercent !== undefined) particleData.submicronPercent = submicronPercent;
+        if (timestamp) particleData.timestamp = timestamp;
+        
+        data.push(particleData);
       } catch (rowError: any) {
         throw rowError;
       }
+    }
+    
+    // If we got here with no data, that's an error
+    if (data.length === 0) {
+      throw new Error("No valid particle size data found in file");
     }
     
     return {
