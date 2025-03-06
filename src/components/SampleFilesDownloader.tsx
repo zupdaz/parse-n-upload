@@ -20,7 +20,7 @@ export function SampleFilesDownloader() {
           Download Sample Files
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel>Sample Data Files</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem 
@@ -34,6 +34,23 @@ export function SampleFilesDownloader() {
           className="cursor-pointer"
         >
           Particle Size Data (CSV)
+        </DropdownMenuItem>
+        
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-yellow-500">Test Error Samples</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        
+        <DropdownMenuItem 
+          onClick={() => downloadSampleFile("error-dissolution-csv")}
+          className="cursor-pointer text-yellow-600"
+        >
+          Dissolution Test Data with Errors (CSV)
+        </DropdownMenuItem>
+        <DropdownMenuItem 
+          onClick={() => downloadSampleFile("error-particle-csv")}
+          className="cursor-pointer text-yellow-600"
+        >
+          Particle Size Data with Errors (CSV)
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

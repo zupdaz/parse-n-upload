@@ -3,10 +3,21 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import { UploadJob } from "@/components/UploadProgress";
+import { parseDissolutionData, parseParticleData, ParseResult } from "@/utils/fileParsers";
+
+export interface ParseError {
+  fileName: string;
+  message: string;
+  details: string;
+  line?: number;
+  raw?: string;
+}
 
 export function useFileUpload() {
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [parseErrors, setParseErrors] = useState<ParseError[]>([]);
+  const [currentError, setCurrentError] = useState<ParseError | null>(null);
   
   // More accurate file type detection based on content
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
@@ -51,6 +62,42 @@ export function useFileUpload() {
     };
   };
   
+  const parseFile = async (file: File, fileType: "dissolution" | "particle" | undefined): Promise<ParseResult<any>> => {
+    try {
+      const content = await file.text();
+      
+      if (fileType === "dissolution") {
+        return parseDissolutionData(content);
+      } else if (fileType === "particle") {
+        return parseParticleData(content);
+      } else {
+        // Try both parsers if type is not determined
+        const dissResult = parseDissolutionData(content);
+        if (dissResult.success) {
+          return dissResult;
+        }
+        
+        const partResult = parseParticleData(content);
+        if (partResult.success) {
+          return partResult;
+        }
+        
+        // If both fail, return the more detailed error
+        return dissResult.error?.details.length > (partResult.error?.details.length || 0) 
+          ? dissResult 
+          : partResult;
+      }
+    } catch (error: any) {
+      return {
+        success: false,
+        error: {
+          message: error.message || "Unknown parsing error",
+          details: error.toString()
+        }
+      };
+    }
+  };
+  
   const uploadFiles = async (files: File[], projectId: string) => {
     if (!projectId) {
       toast.error("Please select a project before uploading");
@@ -58,6 +105,7 @@ export function useFileUpload() {
     }
     
     setIsUploading(true);
+    setParseErrors([]);
     
     // Create job entries for each file
     const jobPromises = Array.from(files).map(file => createUploadJob(file));
@@ -68,6 +116,7 @@ export function useFileUpload() {
     // Process each file one by one (simulating a queue)
     for (let i = 0; i < newJobs.length; i++) {
       const job = newJobs[i];
+      const file = files[i];
       
       // Update job status to processing
       setJobs(prev => 
@@ -82,14 +131,53 @@ export function useFileUpload() {
         // Simulate file upload process with progress updates
         await simulateFileUpload(job.id);
         
-        // Update job status to completed
-        setJobs(prev => 
-          prev.map(j => 
-            j.id === job.id 
-              ? { ...j, status: "completed" as const, progress: 100 } 
-              : j
-          )
-        );
+        // Try to parse the file
+        const parseResult = await parseFile(file, job.fileType);
+        
+        if (parseResult.success) {
+          // Update job status to completed
+          setJobs(prev => 
+            prev.map(j => 
+              j.id === job.id 
+                ? { ...j, status: "completed" as const, progress: 100 } 
+                : j
+            )
+          );
+        } else {
+          // Handle parse error
+          const errorDetails: ParseError = {
+            fileName: file.name,
+            message: parseResult.error?.message || "Unknown parsing error",
+            details: parseResult.error?.details || "No details available",
+            line: parseResult.error?.line,
+            raw: parseResult.error?.raw
+          };
+          
+          setParseErrors(prev => [...prev, errorDetails]);
+          
+          // Update job status to failed
+          setJobs(prev => 
+            prev.map(j => 
+              j.id === job.id 
+                ? { 
+                    ...j, 
+                    status: "failed" as const, 
+                    error: parseResult.error?.message || "Parsing failed"
+                  } 
+                : j
+            )
+          );
+          
+          // Show error toast with button to show details
+          toast.error(`Failed to parse ${file.name}`, {
+            description: "Click 'View Details' to see more information and report this issue.",
+            action: {
+              label: "View Details",
+              onClick: () => setCurrentError(errorDetails)
+            },
+            duration: 10000,
+          });
+        }
       } catch (error) {
         // Simulate occasional failures
         setJobs(prev => 
@@ -156,7 +244,10 @@ export function useFileUpload() {
     isUploading,
     uploadFiles,
     clearCompletedJobs,
-    clearAllJobs
+    clearAllJobs,
+    parseErrors,
+    currentError,
+    setCurrentError
   };
 }
 

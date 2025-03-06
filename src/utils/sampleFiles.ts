@@ -22,6 +22,19 @@ const particleData = [
   { batchId: "B23005", d10: 0.75, d50: 5.3, d90: 12.5, span: 2.21, specificSurface: 12800 }
 ];
 
+// Error sample data - Missing columns in dissolution data
+const errorDissolutionData = [
+  // Missing vessel3 column
+  { timePoint: 5, vessel1: 10.2, vessel2: 11.5, vessel4: 10.5, vessel5: 11.2, vessel6: 10.9 },
+  { timePoint: 10, vessel1: 25.7, vessel2: 26.3, vessel4: 25.8, vessel5: 26.5, vessel6: 25.2 },
+];
+
+// Error sample data - Invalid values in particle data
+const errorParticleData = [
+  { batchId: "B23001", d10: "invalid", d50: 5.4, d90: 12.6, span: 2.18, specificSurface: 12500 },
+  { batchId: "B23002", d10: 0.9, d50: "N/A", d90: 12.9, span: 2.14, specificSurface: 12200 },
+];
+
 // Convert data to CSV format
 export const generateDissolutionCSV = (): string => {
   const header = "Time Point,Vessel 1,Vessel 2,Vessel 3,Vessel 4,Vessel 5,Vessel 6";
@@ -39,8 +52,25 @@ export const generateParticleCSV = (): string => {
   return [header, ...rows].join('\n');
 };
 
+// Generate error-containing files
+export const generateErrorDissolutionCSV = (): string => {
+  const header = "Time Point,Vessel 1,Vessel 2,Vessel 4,Vessel 5,Vessel 6";
+  const rows = errorDissolutionData.map(row => 
+    `${row.timePoint},${row.vessel1},${row.vessel2},${row.vessel4},${row.vessel5},${row.vessel6}`
+  );
+  return [header, ...rows].join('\n');
+};
+
+export const generateErrorParticleCSV = (): string => {
+  const header = "Batch ID,D10 (μm),D50 (μm),D90 (μm),Span,Specific Surface (cm²/g)";
+  const rows = errorParticleData.map(row => 
+    `${row.batchId},${row.d10},${row.d50},${row.d90},${row.span},${row.specificSurface}`
+  );
+  return [header, ...rows].join('\n');
+};
+
 // Function to create and trigger download of a sample file
-export const downloadSampleFile = (fileType: "dissolution-csv" | "particle-csv") => {
+export const downloadSampleFile = (fileType: "dissolution-csv" | "particle-csv" | "error-dissolution-csv" | "error-particle-csv") => {
   let content = '';
   let filename = '';
   
@@ -52,6 +82,14 @@ export const downloadSampleFile = (fileType: "dissolution-csv" | "particle-csv")
     case "particle-csv":
       content = generateParticleCSV();
       filename = "sample_particle_size_data.csv";
+      break;
+    case "error-dissolution-csv":
+      content = generateErrorDissolutionCSV();
+      filename = "sample_dissolution_error_data.csv";
+      break;
+    case "error-particle-csv":
+      content = generateErrorParticleCSV();
+      filename = "sample_particle_error_data.csv";
       break;
   }
   

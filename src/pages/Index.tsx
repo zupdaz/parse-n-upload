@@ -5,6 +5,7 @@ import { ProjectSelector } from "@/components/ProjectSelector";
 import { FileUploader } from "@/components/FileUploader";
 import { UploadProgress } from "@/components/UploadProgress";
 import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
+import { ErrorReportDialog } from "@/components/ErrorReportDialog";
 import useFileUpload from "@/hooks/use-file-upload";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +25,15 @@ import { toast } from "sonner";
 
 const Index = () => {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const { jobs, isUploading, uploadFiles, clearCompletedJobs, clearAllJobs } = useFileUpload();
+  const { 
+    jobs, 
+    isUploading, 
+    uploadFiles, 
+    clearCompletedJobs, 
+    clearAllJobs,
+    currentError,
+    setCurrentError
+  } = useFileUpload();
 
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -136,6 +145,15 @@ const Index = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Error Report Dialog */}
+        <ErrorReportDialog 
+          open={!!currentError} 
+          onOpenChange={(open) => {
+            if (!open) setCurrentError(null);
+          }}
+          errorDetails={currentError} 
+        />
       </div>
     </AppLayout>
   );
