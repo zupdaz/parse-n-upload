@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -21,33 +20,15 @@ export function useFileUpload() {
   
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
-      const chunk = await file.slice(0, 3000).text();
-      const lines = chunk.split('\n').slice(0, 20);
+      const chunk = await file.slice(0, 1500).text();
+      const lines = chunk.split('\n').slice(0, 5);
       const header = lines[0].toLowerCase();
-      
-      // Check for Mastersizer format (tab-delimited with specific column structure)
-      if (chunk.includes('\t') && (
-          chunk.includes('Comment 1') || 
-          chunk.includes('Comment 2') || 
-          chunk.includes('File  1') || 
-          chunk.includes('Size class')
-      )) {
-        return "particle";
-      }
-      
-      // Check for specific Mastersizer formats with x(Q3) format
-      if (chunk.includes('x(Q3=10.0 %)') || 
-          chunk.includes('x(Q3=50.0 %)') || 
-          chunk.includes('x(Q3=90.0 %)')) {
-        return "particle";
-      }
       
       const particleSizePatterns = [
         'd10', 'd50', 'd90', 'd(0.1)', 'd(0.5)', 'd(0.9)',
         'd[v,0.1]', 'd[v,0.5]', 'd[v,0.9]',
         'span', 'surface area', 'specific surface',
-        'median', 'distribution', 'particle size',
-        'mastersizer', 'malvern', 'method_short', 'intermediate_form'
+        'median', 'distribution', 'particle size'
       ];
       
       const dissolutionPatterns = [
@@ -67,17 +48,6 @@ export function useFileUpload() {
         }
       }
       
-      // Look for blank rows followed by specific tables (Mastersizer structure)
-      let blankRowCount = 0;
-      for (let i = 0; i < lines.length && i < 20; i++) {
-        if (!lines[i].trim()) {
-          blankRowCount++;
-          if (blankRowCount >= 2) {
-            return "particle"; // Likely a Mastersizer file
-          }
-        }
-      }
-      
       const potentialTimePoints = lines.slice(1, 5).filter(line => {
         const cells = line.split(',');
         return cells.length > 2 && !isNaN(parseFloat(cells[0]));
@@ -87,15 +57,12 @@ export function useFileUpload() {
         return "dissolution";
       }
       
-      // Try to detect from filename
       if (file.name.toLowerCase().includes('diss')) {
         return "dissolution";
       } else if (
         file.name.toLowerCase().includes('part') || 
         file.name.toLowerCase().includes('size') ||
-        file.name.toLowerCase().includes('psd') ||
-        file.name.toLowerCase().includes('master') ||
-        file.name.toLowerCase().includes('gran')
+        file.name.toLowerCase().includes('psd')
       ) {
         return "particle";
       }
