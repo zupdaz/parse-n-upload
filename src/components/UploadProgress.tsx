@@ -5,9 +5,11 @@ import {
   Clock,
   Loader2,
   AlertCircle,
-  FileType
+  FileType,
+  Mail
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
@@ -25,10 +27,12 @@ export interface UploadJob {
 interface UploadProgressProps {
   jobs: UploadJob[];
   onComplete?: () => void;
+  onReportError?: (fileName: string) => void;
 }
 
-export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
+export function UploadProgress({ jobs, onComplete, onReportError }: UploadProgressProps) {
   const [completedCount, setCompletedCount] = useState(0);
+  const failedJobs = jobs.filter(job => job.status === "failed");
   
   useEffect(() => {
     const completed = jobs.filter(
@@ -74,6 +78,30 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
       
       <Progress value={(completedCount / jobs.length) * 100} className="h-2" />
       
+      {failedJobs.length > 0 && (
+        <div className="my-4 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              <span className="font-medium text-amber-800 dark:text-amber-300">
+                {failedJobs.length} file{failedJobs.length !== 1 ? 's' : ''} failed parsing
+              </span>
+            </div>
+            {onReportError && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="bg-white dark:bg-amber-950 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900"
+                onClick={() => onReportError(failedJobs[0].fileName)}
+              >
+                <Mail className="mr-2 h-4 w-4" />
+                Send Report
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      
       <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
         {jobs.map((job) => (
           <div
@@ -110,9 +138,22 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
             )}
             
             {job.status === "failed" && job.error && (
-              <p className="text-xs text-destructive mt-1">
-                {job.error}
-              </p>
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-xs text-destructive">
+                  {job.error}
+                </p>
+                {onReportError && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => onReportError(job.fileName)}
+                  >
+                    <Mail className="mr-1 h-3 w-3" />
+                    Report
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         ))}
