@@ -1,3 +1,4 @@
+
 /**
  * Utility functions for parsing different types of data files
  */
@@ -177,7 +178,8 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
   try {
     // Check if this might be a tab-delimited UTF-16 file in Mastersizer format
     if (content.includes('\t') && 
-        (content.includes('Comment 1') || content.includes('Comment 2'))) {
+        (content.includes('Comment 1') || content.includes('Comment 2') || 
+         content.includes('File  1') || content.includes('Size class'))) {
       return parseMastersizerData(content);
     }
     
@@ -428,7 +430,7 @@ export const parseParticleData = (content: string): ParseResult<ParticleData> =>
   }
 };
 
-// Parse Mastersizer format files (similar to Python implementation)
+// Enhanced Parse Mastersizer format files (similar to Python implementation)
 const parseMastersizerData = (content: string): ParseResult<ParticleData> => {
   try {
     // Split the content into lines
@@ -437,6 +439,13 @@ const parseMastersizerData = (content: string): ParseResult<ParticleData> => {
       throw new Error("Mastersizer file has insufficient data");
     }
 
+    // Determine file format type
+    const isAlternativeFormat = content.includes('File  1') && content.includes('Size class');
+    
+    if (isAlternativeFormat) {
+      return parseAlternativeMastersizerFormat(content);
+    }
+    
     // Find the blank rows that separate sections
     const blankRowIndices: number[] = [];
     for (let i = 0; i < lines.length; i++) {
@@ -580,6 +589,166 @@ const parseMastersizerData = (content: string): ParseResult<ParticleData> => {
       success: false,
       error: {
         message: error.message || "Failed to parse Mastersizer particle data",
+        details: error.details || error.toString()
+      }
+    };
+  }
+};
+
+// Parse alternative Mastersizer format (similar to the Python code's structure)
+const parseAlternativeMastersizerFormat = (content: string): ParseResult<ParticleData> => {
+  try {
+    // Split the content into lines
+    const lines = content.split('\n');
+    
+    // Find the key sections in the file
+    let fileTableEndIndex = -1;
+    let parametersTableStartIndex = -1;
+    let sizeClassTableStartIndex = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('File 10') || line.includes('File  10')) {
+        fileTableEndIndex = i;
+      } else if (line.includes('Comment 1') && parametersTableStartIndex === -1) {
+        parametersTableStartIndex = i;
+      } else if (line.includes('Size class')) {
+        sizeClassTableStartIndex = i;
+      }
+    }
+    
+    if (fileTableEndIndex === -1 || parametersTableStartIndex === -1) {
+      throw new Error("Could not find required sections in the file structure");
+    }
+    
+    // Parse the parameters table (metadata)
+    const metadataRows = lines
+      .slice(parametersTableStartIndex, sizeClassTableStartIndex)
+      .filter(line => line.trim())
+      .map(line => line.split('\t').map(cell => cell.trim()));
+    
+    // Find indices for critical columns: Comment 1 (MRA_no) and Comment 2 (Label_OU_SR)
+    const headerRow = metadataRows[0];
+    
+    // Find the d10, d50, d90 rows
+    let d10Row = -1;
+    let d50Row = -1;
+    let d90Row = -1;
+    let spanRow = -1;
+    let ssaRow = -1;
+    
+    for (let i = 0; i < metadataRows.length; i++) {
+      const rowName = metadataRows[i][0]?.toLowerCase() || '';
+      if (rowName.includes('x(q3=10.0 %)') || rowName.includes('d(0.1)') || rowName.includes('d10')) {
+        d10Row = i;
+      } else if (rowName.includes('x(q3=50.0 %)') || rowName.includes('d(0.5)') || rowName.includes('d50')) {
+        d50Row = i;
+      } else if (rowName.includes('x(q3=90.0 %)') || rowName.includes('d(0.9)') || rowName.includes('d90')) {
+        d90Row = i;
+      } else if (rowName.includes('span') || rowName.includes('span3')) {
+        spanRow = i;
+      } else if (rowName.includes('sv') || rowName.includes('surface') || rowName.includes('specific surface')) {
+        ssaRow = i;
+      }
+    }
+    
+    if (d10Row === -1 || d50Row === -1 || d90Row === -1) {
+      throw new Error("Could not find required particle size distribution rows (d10, d50, d90)");
+    }
+    
+    // Extract Comment 1 and Comment 2 rows
+    const comment1Row = metadataRows.findIndex(row => row[0]?.includes('Comment 1'));
+    const comment2Row = metadataRows.findIndex(row => row[0]?.includes('Comment 2'));
+    
+    if (comment1Row === -1 || comment2Row === -1) {
+      throw new Error("Could not find Comment 1 and Comment 2 rows");
+    }
+    
+    // Process the data
+    const data: ParticleData[] = [];
+    
+    // For each file/column, extract the particle data
+    for (let fileIdx = 1; fileIdx <= 10; fileIdx++) {
+      try {
+        const colIdx = fileIdx; // Column index corresponds to file number
+        
+        // Skip if column doesn't exist in any row
+        if (metadataRows[0].length <= colIdx) continue;
+        
+        const label = metadataRows[comment2Row][colIdx];
+        if (!label || label === '') continue;
+        
+        // Extract d10, d50, d90 values
+        const d10Str = metadataRows[d10Row][colIdx].replace(',', '.');
+        const d50Str = metadataRows[d50Row][colIdx].replace(',', '.');
+        const d90Str = metadataRows[d90Row][colIdx].replace(',', '.');
+        
+        if (!d10Str || !d50Str || !d90Str) continue;
+        
+        const d10 = parseFloat(d10Str);
+        const d50 = parseFloat(d50Str);
+        const d90 = parseFloat(d90Str);
+        
+        if (isNaN(d10) || isNaN(d50) || isNaN(d90)) continue;
+        
+        // Get span or calculate it
+        let span: number;
+        if (spanRow !== -1 && metadataRows[spanRow][colIdx]) {
+          span = parseFloat(metadataRows[spanRow][colIdx].replace(',', '.'));
+        } else {
+          span = (d90 - d10) / d50;
+        }
+        
+        // Get specific surface area if available
+        let specificSurface = 0;
+        if (ssaRow !== -1 && metadataRows[ssaRow][colIdx]) {
+          specificSurface = parseFloat(metadataRows[ssaRow][colIdx].replace(',', '.'));
+        }
+        
+        // Get MRA_no (Comment 1)
+        const mraNo = metadataRows[comment1Row][colIdx];
+        
+        // Process label for additional metadata
+        const [methodShort, afterMethod] = extractMethodShort(label);
+        const [trial, intermediateForm] = extractTrial(afterMethod || label);
+        const extractedTrial = trial ? extractTrialWithoutLetter(trial) : undefined;
+        
+        // Create the particle data entry
+        const particleData: ParticleData = {
+          batchId: label,
+          d10,
+          d50,
+          d90,
+          span,
+          specificSurface
+        };
+        
+        // Add additional metadata
+        if (methodShort) particleData.methodShort = methodShort;
+        if (extractedTrial) particleData.trial = extractedTrial;
+        if (intermediateForm) particleData.intermediateForm = intermediateForm;
+        if (mraNo) particleData.timestamp = mraNo; // Use timestamp field to store MRA_no
+        
+        data.push(particleData);
+      } catch (error) {
+        console.error(`Error processing file column ${fileIdx}:`, error);
+        // Continue with other columns rather than failing
+      }
+    }
+    
+    if (data.length === 0) {
+      throw new Error("No valid particle size data could be extracted from the file");
+    }
+    
+    return {
+      success: true,
+      data
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: {
+        message: error.message || "Failed to parse alternative Mastersizer format",
         details: error.details || error.toString()
       }
     };

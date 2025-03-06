@@ -21,12 +21,24 @@ export function useFileUpload() {
   
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
-      const chunk = await file.slice(0, 1500).text();
-      const lines = chunk.split('\n').slice(0, 10);
+      const chunk = await file.slice(0, 3000).text();
+      const lines = chunk.split('\n').slice(0, 20);
       const header = lines[0].toLowerCase();
       
       // Check for Mastersizer format (tab-delimited with specific column structure)
-      if (chunk.includes('\t') && (chunk.includes('Comment 1') || chunk.includes('Comment 2'))) {
+      if (chunk.includes('\t') && (
+          chunk.includes('Comment 1') || 
+          chunk.includes('Comment 2') || 
+          chunk.includes('File  1') || 
+          chunk.includes('Size class')
+      )) {
+        return "particle";
+      }
+      
+      // Check for specific Mastersizer formats with x(Q3) format
+      if (chunk.includes('x(Q3=10.0 %)') || 
+          chunk.includes('x(Q3=50.0 %)') || 
+          chunk.includes('x(Q3=90.0 %)')) {
         return "particle";
       }
       
@@ -57,7 +69,7 @@ export function useFileUpload() {
       
       // Look for blank rows followed by specific tables (Mastersizer structure)
       let blankRowCount = 0;
-      for (let i = 0; i < lines.length && i < 10; i++) {
+      for (let i = 0; i < lines.length && i < 20; i++) {
         if (!lines[i].trim()) {
           blankRowCount++;
           if (blankRowCount >= 2) {
@@ -75,13 +87,15 @@ export function useFileUpload() {
         return "dissolution";
       }
       
+      // Try to detect from filename
       if (file.name.toLowerCase().includes('diss')) {
         return "dissolution";
       } else if (
         file.name.toLowerCase().includes('part') || 
         file.name.toLowerCase().includes('size') ||
         file.name.toLowerCase().includes('psd') ||
-        file.name.toLowerCase().includes('master')
+        file.name.toLowerCase().includes('master') ||
+        file.name.toLowerCase().includes('gran')
       ) {
         return "particle";
       }
