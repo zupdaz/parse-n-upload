@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import { UploadJob } from "@/components/UploadProgress";
 import { parseDissolutionData, parseParticleData, ParseResult } from "@/utils/fileParsers";
+import { parseParticleFile } from "@/services/ParticleParserService";
 
 export interface ParseError {
   fileName: string;
@@ -24,14 +25,14 @@ export function useFileUpload() {
     try {
       // Read first few lines of the file
       const chunk = await file.slice(0, 500).text();
-      const firstLines = chunk.split('\n').slice(0, 2).join(' ').toLowerCase();
+      const firstLines = chunk.split('\n').slice(0, 10).join(' ').toLowerCase();
       
       // Look for keywords to identify file type
       if (firstLines.includes('vessel') || firstLines.includes('time point')) {
         return "dissolution";
       } else if (firstLines.includes('batch') || firstLines.includes('particle') || 
                  firstLines.includes('d10') || firstLines.includes('d50') || 
-                 firstLines.includes('d90')) {
+                 firstLines.includes('d90') || firstLines.includes('file') && firstLines.includes('comment 1')) {
         return "particle";
       }
       
@@ -50,6 +51,16 @@ export function useFileUpload() {
     }
   };
   
+  const isMastersizeFormat = async (file: File): Promise<boolean> => {
+    try {
+      const chunk = await file.slice(0, 2000).text();
+      return chunk.includes('Comment 1') && chunk.includes('Comment 2') && 
+             (chunk.includes('Size class') || chunk.includes('x(Q3='));
+    } catch (error) {
+      return false;
+    }
+  };
+  
   const createUploadJob = async (file: File): Promise<UploadJob> => {
     const fileType = await detectFileType(file);
     return {
@@ -64,20 +75,39 @@ export function useFileUpload() {
   
   const parseFile = async (file: File, fileType: "dissolution" | "particle" | undefined): Promise<ParseResult<any>> => {
     try {
-      const content = await file.text();
-      
       if (fileType === "dissolution") {
-        return parseDissolutionData(content);
+        return parseDissolutionData(await file.text());
       } else if (fileType === "particle") {
-        return parseParticleData(content);
+        // Check if this is a Mastersize format file that needs the Python parser
+        const isMastersize = await isMastersizeFormat(file);
+        
+        if (isMastersize) {
+          // Use the Python parser service for Mastersize format
+          const result = await parseParticleFile(file);
+          
+          if (result.success) {
+            return {
+              success: true,
+              data: result.data
+            };
+          } else {
+            return {
+              success: false,
+              error: result.error
+            };
+          }
+        } else {
+          // Use the standard JS parser for other particle size formats
+          return parseParticleData(await file.text());
+        }
       } else {
         // Try both parsers if type is not determined
-        const dissResult = parseDissolutionData(content);
+        const dissResult = parseDissolutionData(await file.text());
         if (dissResult.success) {
           return dissResult;
         }
         
-        const partResult = parseParticleData(content);
+        const partResult = parseParticleData(await file.text());
         if (partResult.success) {
           return partResult;
         }
