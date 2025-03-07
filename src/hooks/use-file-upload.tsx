@@ -24,13 +24,19 @@ export function useFileUpload() {
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
       // Read first few lines of the file
-      const chunk = await file.slice(0, 2000).text();
+      const chunk = await file.slice(0, 3000).text();
       const lines = chunk.toLowerCase().split('\n');
       const joinedLines = lines.join(' ');
       
       console.log(`Detecting file type for ${file.name}`);
       
-      // Look for keywords to identify file type
+      // Look for specific particle size indicators - SPAN3 is specific to particle size files
+      if (joinedLines.includes('span3')) {
+        console.log(`${file.name} detected as particle (found SPAN3)`);
+        return "particle";
+      }
+      
+      // Look for keywords to identify dissolution file type
       if (joinedLines.includes('vessel') && 
           (joinedLines.includes('time point') || joinedLines.includes('timepoint'))) {
         console.log(`${file.name} detected as dissolution`);
@@ -57,7 +63,8 @@ export function useFileUpload() {
         return "dissolution";
       } else if (file.name.toLowerCase().includes('part') || 
                 file.name.toLowerCase().includes('size') ||
-                file.name.toLowerCase().includes('gran')) {
+                file.name.toLowerCase().includes('gran') ||
+                file.name.toLowerCase().includes('cam')) {
         console.log(`${file.name} guessed as particle based on filename`);
         return "particle";
       }
@@ -74,9 +81,12 @@ export function useFileUpload() {
   const isMastersizeFormat = async (file: File): Promise<boolean> => {
     try {
       const chunk = await file.slice(0, 3000).text();
-      // Look for specific Mastersize format indicators
-      return (chunk.includes('Comment 1') && chunk.includes('Comment 2')) ||
-             (chunk.includes('x(Q3=') || /Size class\s+\[\w+\]/.test(chunk));
+      const lowerChunk = chunk.toLowerCase();
+      
+      // Look for specific Mastersize format indicators or SPAN3
+      return (lowerChunk.includes('comment 1') && lowerChunk.includes('comment 2')) ||
+             (lowerChunk.includes('x(q3=') || /size class\s+\[\w+\]/.test(lowerChunk)) ||
+             lowerChunk.includes('span3');
     } catch (error) {
       console.error("Error checking if Mastersize format:", error);
       return false;
@@ -136,7 +146,7 @@ export function useFileUpload() {
         try {
           const fileText = await file.text();
           
-          // First try the Mastersize Python parser
+          // First check for Mastersize format to use Python parser
           if (await isMastersizeFormat(file)) {
             console.log(`${file.name} appears to be Mastersize format, trying Python parser first`);
             const result = await parseParticleFile(file);
@@ -163,7 +173,7 @@ export function useFileUpload() {
               success: false,
               error: {
                 message: "This doesn't appear to be a dissolution file",
-                details: "The file is missing vessel columns. This might be a particle size file in a format not supported by our parsers."
+                details: "The file is missing vessel columns. Try using the desktop application for particle size files."
               }
             };
           }

@@ -1,7 +1,5 @@
 
-import axios from 'axios';
-
-const API_BASE_URL = 'http://localhost:4000/api';
+import { toast } from "sonner";
 
 export interface ParticleParsingResult {
   success: boolean;
@@ -16,38 +14,67 @@ export interface ParticleParsingResult {
 
 export const parseParticleFile = async (file: File): Promise<ParticleParsingResult> => {
   try {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    console.log(`Sending file ${file.name} to particle parser at ${API_BASE_URL}/parse-particle-size`);
+    console.log(`Sending file ${file.name} for particle parsing via electron IPC`);
     
-    const response = await axios.post(
-      `${API_BASE_URL}/parse-particle-size`,
-      formData,
-      {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 30000, // Increase timeout to 30 seconds for larger files
+    // Create a form data object to pass to the main process
+    const fileBuffer = await file.arrayBuffer();
+    
+    // Check if we're running in Electron environment
+    if (window.electron) {
+      console.log("Using electron IPC to parse particle file");
+      
+      try {
+        // Save the file to a temporary location and get the path
+        const tempFilePath = await window.electron.saveTempFile(file.name, new Uint8Array(fileBuffer));
+        console.log(`Temporary file saved at: ${tempFilePath}`);
+        
+        // Call the Python parser through electron
+        const result = await window.electron.runPythonParser(tempFilePath);
+        console.log(`Received parser result for ${file.name}: success=${result.success}`);
+        
+        return result;
+      } catch (error) {
+        console.error("Error in electron IPC parsing:", error);
+        return {
+          success: false,
+          error: {
+            message: 'Failed to parse file using electron',
+            details: error instanceof Error ? error.message : String(error)
+          }
+        };
       }
-    );
-
-    console.log(`Received response from particle parser for ${file.name}:`, response.data.success);
-    return response.data;
+    } else {
+      // Fallback to web worker approach
+      console.log("Electron not available, using web worker fallback");
+      
+      // Create a FormData object for XHR
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Display an error message with instructions
+      toast.error("Parser execution failed", {
+        description: "This application requires Electron environment to parse particle size files. Please use the desktop version.",
+        duration: 6000
+      });
+      
+      return {
+        success: false,
+        error: {
+          message: 'Particle size parser requires desktop app',
+          details: 'To parse particle size files, please use the desktop application which includes the Python parser. Web version has limited functionality.'
+        }
+      };
+    }
   } catch (error) {
     console.error("Error in parseParticleFile:", error);
-    
-    if (axios.isAxiosError(error) && error.response) {
-      return error.response.data as ParticleParsingResult;
-    }
     
     // More detailed error message
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return {
       success: false,
       error: {
-        message: 'Failed to connect to parser service',
-        details: `Connection error: ${errorMessage}. Make sure the parser server is running at ${API_BASE_URL}.`
+        message: 'Failed to parse particle file',
+        details: `Error: ${errorMessage}`
       }
     };
   }
