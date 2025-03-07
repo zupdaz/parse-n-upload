@@ -2,76 +2,50 @@
 const express = require('express');
 const multer = require('multer');
 const { spawn } = require('child_process');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const port = 4000;
 
-// Set up CORS to allow requests from your React app
+// Enable CORS for all routes
 app.use(cors());
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    // Preserve original filename for the python parser
-    cb(null, file.originalname);
-  }
-});
-
-const upload = multer({ storage });
-
-// Clean up temporary files older than 1 hour
-function cleanupTempFiles() {
-  const uploadDir = path.join(__dirname, 'uploads');
-  if (fs.existsSync(uploadDir)) {
-    fs.readdir(uploadDir, (err, files) => {
-      if (err) return console.error('Error reading upload directory:', err);
-      
-      const oneHourAgo = Date.now() - 3600000;
-      
-      files.forEach(file => {
-        const filePath = path.join(uploadDir, file);
-        fs.stat(filePath, (err, stats) => {
-          if (err) return console.error(`Error getting stats for file ${file}:`, err);
-          
-          if (stats.mtimeMs < oneHourAgo) {
-            fs.unlink(filePath, err => {
-              if (err) console.error(`Error deleting file ${file}:`, err);
-            });
-          }
-        });
-      });
-    });
-  }
+// Create temp directory if it doesn't exist
+const tempDir = path.join(__dirname, 'temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir);
 }
 
-// Run cleanup every hour
-setInterval(cleanupTempFiles, 3600000);
+// Configure multer for file uploads
+const upload = multer({ 
+  dest: tempDir,
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
-// Endpoint for parsing particle size files
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
+});
+
+// API endpoint for particle size parsing
 app.post('/api/parse-particle-size', upload.single('file'), (req, res) => {
   if (!req.file) {
-    return res.status(400).json({ 
-      success: false, 
-      error: { 
+    console.error('No file uploaded');
+    return res.status(400).json({
+      success: false,
+      error: {
         message: 'No file uploaded',
-        details: 'Please provide a file to parse'
-      } 
+        details: 'Please upload a file to parse'
+      }
     });
   }
 
-  const filePath = req.file.path;
+  console.log(`Received file: ${req.file.originalname} (${req.file.size} bytes)`);
   
-  // Execute the Python parser script with the file path
+  // Execute Python script with the temp file
+  const filePath = req.file.path;
   const pythonProcess = spawn('python', [
     path.join(__dirname, 'particle_size_parser.py'),
     filePath
@@ -80,41 +54,54 @@ app.post('/api/parse-particle-size', upload.single('file'), (req, res) => {
   let dataString = '';
   let errorString = '';
 
-  pythonProcess.stdout.on('data', data => {
+  pythonProcess.stdout.on('data', (data) => {
     dataString += data.toString();
   });
 
-  pythonProcess.stderr.on('data', data => {
+  pythonProcess.stderr.on('data', (data) => {
     errorString += data.toString();
+    console.error(`Python Error: ${data}`);
   });
 
-  pythonProcess.on('close', code => {
+  pythonProcess.on('close', (code) => {
+    // Clean up temp file
+    fs.unlink(filePath, (err) => {
+      if (err) console.error(`Failed to delete temp file: ${err}`);
+    });
+
     if (code !== 0) {
+      console.error(`Python process exited with code ${code}`);
+      console.error(`Error output: ${errorString}`);
+      
       return res.status(500).json({
         success: false,
         error: {
-          message: 'Python parser execution failed',
-          details: errorString || 'No error details available'
+          message: 'Python parser process failed',
+          details: `Exit code: ${code}. Error: ${errorString || 'No error details available'}`
         }
       });
     }
 
     try {
-      // Parse the JSON output from the Python script
       const result = JSON.parse(dataString);
+      console.log(`Successfully parsed file. Result success: ${result.success}`);
       res.json(result);
     } catch (error) {
+      console.error(`Failed to parse Python output: ${error}`);
+      console.error(`Raw output: ${dataString}`);
+      
       res.status(500).json({
         success: false,
         error: {
-          message: 'Failed to parse Python script output',
-          details: `Error: ${error.message}. Output: ${dataString}`
+          message: 'Failed to parse Python output',
+          details: `JSON parsing error: ${error.message}. Raw output: ${dataString.substring(0, 200)}...`
         }
       });
     }
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Start the server
+app.listen(port, () => {
+  console.log(`Particle parser server running at http://localhost:${port}`);
 });
