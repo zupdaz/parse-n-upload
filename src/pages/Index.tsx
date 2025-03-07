@@ -6,7 +6,7 @@ import { FileUploader } from "@/components/FileUploader";
 import { UploadProgress } from "@/components/UploadProgress";
 import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
 import { ErrorReportDialog } from "@/components/ErrorReportDialog";
-import useFileUpload, { ParseError } from "@/hooks/use-file-upload";
+import useFileUpload from "@/hooks/use-file-upload";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -31,7 +31,6 @@ const Index = () => {
     uploadFiles, 
     clearCompletedJobs, 
     clearAllJobs,
-    parseErrors,
     currentError,
     setCurrentError
   } = useFileUpload();
@@ -57,26 +56,6 @@ const Index = () => {
       toast.success("Upload process completed", {
         description: "All files have been processed successfully.",
       });
-    }
-  };
-  
-  const handleReportError = (fileName: string) => {
-    // Find the error details for this filename
-    const errorDetails = parseErrors.find(err => err.fileName === fileName) || null;
-    
-    if (errorDetails) {
-      setCurrentError(errorDetails);
-    } else {
-      // Fallback if we can't find specific error details
-      const jobWithError = jobs.find(job => job.fileName === fileName && job.status === "failed");
-      if (jobWithError) {
-        const fallbackError: ParseError = {
-          fileName: jobWithError.fileName,
-          message: jobWithError.error || "Unknown parsing error",
-          details: "No detailed error information available."
-        };
-        setCurrentError(fallbackError);
-      }
     }
   };
 
@@ -160,7 +139,6 @@ const Index = () => {
                   <UploadProgress
                     jobs={jobs}
                     onComplete={handleUploadComplete}
-                    onReportError={handleReportError}
                   />
                 </>
               )}
