@@ -57,6 +57,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
       if (!line || !columns[0]) {
         blankRowCount++;
         blankRows[blankRowCount] = t1Rows;
+        console.log(`Found blank row #${blankRowCount} at line ${t1Rows}`);
         
         // Stop after finding the second blank row
         if (blankRowCount === 2) {
@@ -67,7 +68,8 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     
     // Validate we found two blank rows
     if (blankRowCount < 2) {
-      console.error("Could not locate two distinct blank rows in the file");
+      const errorMsg = "Could not locate two distinct blank rows in the file";
+      console.error(errorMsg);
       return {
         success: false,
         error: {
@@ -82,6 +84,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     const numRowsBetweenBlankRows = blankRow2 - blankRow1 - 2;
     
     console.log(`Blank rows detected at: ${blankRow1} and ${blankRow2}`);
+    console.log(`Number of rows between blank rows: ${numRowsBetweenBlankRows}`);
     
     // Read table2 (metadata between the blank rows)
     const table2Headers: string[] = [];
@@ -118,6 +121,8 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
       }
     }
     
+    console.log(`Table2 headers: ${table2Headers.join(', ')}`);
+    
     // Transpose table2 to match pandas transpose operation
     const table2Transposed: Record<string, Record<string, string>> = {};
     for (const header of table2Headers) {
@@ -133,7 +138,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     }
     
     // Read table3 (measurement data after the second blank row)
-    const table3: any[] = [];
+    const table3: Record<string, any>[] = [];
     for (let i = blankRow2 + 2; i < blankRow2 + 102; i++) {
       if (i >= lines.length) break;
       
@@ -151,11 +156,14 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
           value = numValue;
         }
         
-        rowObj[j] = value;
+        // Store the key as a string for consistency
+        rowObj[j.toString()] = value;
       }
       
       table3.push(rowObj);
     }
+    
+    console.log(`Table3 loaded with ${table3.length} rows`);
     
     // Process table data
     const dataTable: Record<string, any>[] = [];
@@ -164,7 +172,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     
     // Process table3 to build chart data
     for (const rowData of table3) {
-      const colLabel = rowData[1];
+      const colLabel = rowData["1"]; // Column position 1 (second column)
       
       // Process data columns starting from the third column
       for (let j = 2; j < Object.keys(rowData).length; j++) {
@@ -180,10 +188,16 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
             }
           }
           
-          if (!rowKey) continue;
+          if (!rowKey) {
+            console.warn(`Could not find Comment 2 value for file key ${fileKey}`);
+            continue;
+          }
           
-          const value = parseFloat(rowData[j]);
-          if (isNaN(value)) continue;
+          const value = parseFloat(rowData[fileKey]);
+          if (isNaN(value)) {
+            console.warn(`Invalid numeric value for ${fileKey}: ${rowData[fileKey]}`);
+            continue;
+          }
           
           if (!tmpChartData[rowKey]) {
             tmpChartData[rowKey] = {};
@@ -201,6 +215,8 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
       const row: Record<string, any> = { ...tmpChartData[rowKey], '0.1': 0.00 };
       chartTable.push(row);
     }
+    
+    console.log(`Chart table created with ${chartTable.length} rows`);
     
     // Process table2Transposed to dataTable
     for (const header of table2Headers) {
@@ -224,6 +240,8 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
       
       dataTable.push(row);
     }
+    
+    console.log(`Data table created with ${dataTable.length} rows`);
     
     // Combine dataTable and chartTable
     const camTable: Record<string, any>[] = [];
@@ -279,6 +297,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     };
     
     // Apply the extraction functions to camTable
+    console.log('Applying extraction functions to data');
     for (const row of camTable) {
       if (row['Label_OU_SR']) {
         const [methodShort, labelOuSr] = extractMethodShort(row['Label_OU_SR']);
@@ -293,6 +312,7 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     }
     
     // Unpivot the data (melt operation)
+    console.log('Creating unpivoted table');
     const camTableUnpivot: Record<string, any>[] = [];
     const sizeClasses = Object.keys(camTable[0] || {}).filter(key => !isNaN(parseFloat(key)));
     
@@ -323,11 +343,20 @@ export const parseCAMFile = (content: string, fileName: string): ParticleParsing
     };
   } catch (error) {
     console.error('Error parsing CAM file:', error);
+    
+    // Get stack trace for better debugging
+    let errorDetails = '';
+    if (error instanceof Error) {
+      errorDetails = `${error.message}\n${error.stack}`;
+    } else {
+      errorDetails = String(error);
+    }
+    
     return {
       success: false,
       error: {
         message: 'Failed to parse CAM file',
-        details: error instanceof Error ? error.message : String(error)
+        details: errorDetails
       }
     };
   }

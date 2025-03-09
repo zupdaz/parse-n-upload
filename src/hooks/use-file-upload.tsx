@@ -22,6 +22,13 @@ export function useFileUpload() {
   // More accurate file type detection based on content
   const detectFileType = async (file: File): Promise<"dissolution" | "particle" | "cam" | undefined> => {
     try {
+      // Automatically categorize CSV files as particle size files
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      if (extension === 'csv') {
+        console.log(`${file.name} automatically categorized as particle/cam (CSV file)`);
+        return "cam";
+      }
+      
       // Read first few lines of the file
       const chunk = await file.slice(0, 5000).text();
       const lines = chunk.toLowerCase().split('\n');
@@ -31,7 +38,7 @@ export function useFileUpload() {
       
       // Look for specific CAM particle size indicators - SPAN3 is specific to particle size files
       if (joinedLines.includes('span3')) {
-        console.log(`${file.name} detected as particle (found SPAN3)`);
+        console.log(`${file.name} detected as particle/cam (found SPAN3)`);
         return "cam";
       }
       
@@ -56,24 +63,26 @@ export function useFileUpload() {
         return "particle";
       }
       
-      // If can't detect from content, make a guess based on name
+      // If can't detect from content, make a guess based on name and extension
       if (file.name.toLowerCase().includes('diss')) {
         console.log(`${file.name} guessed as dissolution based on filename`);
         return "dissolution";
       } else if (file.name.toLowerCase().includes('part') || 
                 file.name.toLowerCase().includes('size') ||
                 file.name.toLowerCase().includes('gran') ||
-                file.name.toLowerCase().includes('cam')) {
-        console.log(`${file.name} guessed as CAM based on filename`);
+                file.name.toLowerCase().includes('cam') ||
+                extension === 'xlsx' || 
+                extension === 'xlsm') {
+        console.log(`${file.name} guessed as CAM based on filename or extension`);
         return "cam";
       }
       
-      // Default fallback - if in doubt, try both parsers later
-      console.log(`${file.name} could not determine type, will try multiple parsers`);
-      return undefined;
+      // Default fallback - if in doubt, treat as CAM for CSV files
+      console.log(`${file.name} could not determine specific type, treating as CAM`);
+      return "cam";
     } catch (error) {
       console.error("Error detecting file type:", error);
-      return undefined;
+      return "cam"; // Default to CAM as a fallback
     }
   };
   
@@ -113,7 +122,7 @@ export function useFileUpload() {
         return parseDissolutionData(await file.text());
       } else if (fileType === "cam") {
         console.log(`Using CAM parser for ${file.name}`);
-        // Use the JavaScript CAM parser
+        // Use the JavaScript CAM parser (polarjs equivalent)
         return parseParticleFile(file);
       } else if (fileType === "particle") {
         console.log(`Using standard JS particle parser for ${file.name}`);
@@ -123,13 +132,11 @@ export function useFileUpload() {
         // Try both parsers if type is not determined
         console.log(`Trying multiple parsers for ${file.name}`);
         try {
-          // First check for CAM format
-          if (await isCAMFormat(file)) {
-            console.log(`${file.name} appears to be CAM format, trying CAM parser first`);
-            const result = await parseParticleFile(file);
-            if (result.success) {
-              return result;
-            }
+          // First try CAM parser since it's our preferred format
+          console.log(`${file.name} trying CAM parser first`);
+          const result = await parseParticleFile(file);
+          if (result.success) {
+            return result;
           }
           
           // Then try dissolution parser
@@ -151,7 +158,7 @@ export function useFileUpload() {
               success: false,
               error: {
                 message: "This doesn't appear to be a dissolution file",
-                details: "The file is missing vessel columns. It might be a particle size format we don't recognize."
+                details: "The file is missing vessel columns. Trying to parse as a particle size file also failed. Please check the file format."
               }
             };
           }

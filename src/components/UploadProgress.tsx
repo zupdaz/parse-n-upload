@@ -17,7 +17,7 @@ export interface UploadJob {
   fileName: string;
   status: JobStatus;
   progress: number;
-  fileType?: "dissolution" | "particle";
+  fileType?: "dissolution" | "particle" | "cam";
   error?: string;
   createdAt: Date;
 }
