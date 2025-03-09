@@ -92,10 +92,10 @@ function parseTabDelimited(content: string, options: {
   
   // If indexCol is specified, use it as the index
   if (indexCol !== undefined && result.length > 0) {
-    const indexed: Record<string, any> = {};
+    // This is just a transformation, not changing the type to Record
+    const indexed: any[] = [];
     for (const row of result) {
-      const indexValue = row[Object.keys(row)[indexCol]];
-      indexed[indexValue] = row;
+      indexed.push(row);
     }
     return indexed;
   }
@@ -168,25 +168,38 @@ export async function parseParticleFile(file: File): Promise<{
     const table2Lines = lines.slice(blankRow1, blankRow1 + numRowsBetweenBlankRows + 1);
     const table2Content = table2Lines.join('\n');
     
-    const table2Raw = parseTabDelimited(table2Content, { 
-      hasHeader: false,
-      indexCol: 0
+    // Parse table2 with first column as index
+    const table2Parsed = Papa.parse(table2Content, {
+      delimiter: '\t',
+      skipEmptyLines: true,
+      header: false
     });
     
-    // Transpose table2
-    const table2Keys = Object.keys(table2Raw);
-    const table2Transposed: Record<string, any>[] = [];
-    
-    if (table2Keys.length > 0) {
-      const firstItem = table2Raw[table2Keys[0]];
-      const headerKeys = Object.keys(firstItem);
-      
-      for (const key of table2Keys) {
-        const row: Record<string, any> = {};
-        for (const headerKey of headerKeys) {
-          row[headerKey] = table2Raw[key][headerKey];
+    // Transform the parsed data into a structure with row[0] as keys
+    const table2Raw: Record<string, Record<string, any>> = {};
+    for (const row of table2Parsed.data as string[][]) {
+      if (row.length > 1) {
+        const key = row[0];
+        if (key) {
+          table2Raw[key] = {};
+          for (let i = 1; i < row.length; i++) {
+            table2Raw[key][`col${i}`] = row[i];
+          }
         }
-        table2Transposed.push(row);
+      }
+    }
+    
+    // Create a transposed version (columns become rows)
+    const table2Transposed: Record<string, any>[] = [];
+    const colKeys = Object.keys(Object.values(table2Raw)[0] || {});
+    
+    for (const colKey of colKeys) {
+      const transposedRow: Record<string, any> = {};
+      for (const rowKey of Object.keys(table2Raw)) {
+        transposedRow[rowKey] = table2Raw[rowKey][colKey];
+      }
+      if ("Comment 1" in transposedRow && "Comment 2" in transposedRow) {
+        table2Transposed.push(transposedRow);
       }
     }
     
@@ -195,32 +208,43 @@ export async function parseParticleFile(file: File): Promise<{
     const table3Lines = lines.slice(blankRow2 + 2, blankRow2 + 102); // Maximum 100 rows
     const table3Content = table3Lines.join('\n');
     
-    const table3 = parseTabDelimited(table3Content, { hasHeader: false });
+    const table3Parsed = Papa.parse(table3Content, {
+      delimiter: '\t',
+      skipEmptyLines: true,
+      header: false
+    });
+    
+    const table3 = table3Parsed.data as string[][];
     
     // Process tables to create chart data
     logger.debug("Processing tables to create chart data");
     const chartData: Record<string, Record<string, number>> = {};
     
+    // Get column headers from table3 (first row)
+    const table3Headers = table3.length > 0 ? table3[0] : [];
+    
     // Process rows in table3
-    for (let idx = 0; idx < table3.length; idx++) {
-      const rowData = table3[idx];
-      const rowValues = Object.values(rowData);
-      const colLabel = String(rowValues[1]); // The second column contains the label
+    for (let rowIdx = 1; rowIdx < table3.length; rowIdx++) {
+      const row = table3[rowIdx];
+      if (row.length < 3) continue; // Skip rows with insufficient data
+      
+      const colLabel = row[1]; // The second column contains the label
       
       // Process data columns starting from the third column
-      for (let i = 2; i < rowValues.length; i++) {
-        const fileKey = Object.keys(rowData)[i];
+      for (let colIdx = 2; colIdx < row.length; colIdx++) {
+        if (colIdx >= table3Headers.length) continue;
+        
+        const colHeader = table3Headers[colIdx];
         
         try {
-          // Get row key from table2 (Comment 2 field)
-          const comment2Value = table2Transposed.find(
-            item => Object.keys(item)[0] === fileKey
-          )?.["Comment 2"];
+          // Find the corresponding Comment 2 value in table2Transposed
+          const matchingMetadata = table2Transposed.find(item => item[colHeader] !== undefined);
+          if (!matchingMetadata) continue;
           
-          if (!comment2Value) continue;
+          const rowKey = String(matchingMetadata["Comment 2"] || "");
+          if (!rowKey) continue;
           
-          const rowKey = String(comment2Value);
-          const value = convertDecimal(String(rowValues[i]));
+          const value = convertDecimal(row[colIdx]);
           
           if (!chartData[rowKey]) {
             chartData[rowKey] = {};
@@ -228,7 +252,7 @@ export async function parseParticleFile(file: File): Promise<{
           
           chartData[rowKey][colLabel] = value;
         } catch (e) {
-          logger.warn(`Skipping data point due to error at idx=${idx}, i=${i}`, e);
+          logger.warn(`Skipping data point due to error at row=${rowIdx}, col=${colIdx}`, e);
         }
       }
     }
@@ -242,7 +266,7 @@ export async function parseParticleFile(file: File): Promise<{
       };
     });
     
-    // Process table2 into data table
+    // Process table2Transposed into data table
     logger.debug("Processing metadata table");
     const dataTable = table2Transposed.map(row => {
       const newRow: Record<string, any> = {};
@@ -259,8 +283,8 @@ export async function parseParticleFile(file: File): Promise<{
       });
       
       // Convert numeric columns
-      Object.keys(newRow).slice(2).forEach(key => {
-        if (newRow[key] && typeof newRow[key] === 'string') {
+      Object.keys(newRow).forEach(key => {
+        if (newRow[key] && typeof newRow[key] === 'string' && !isNaN(parseFloat(newRow[key].replace(',', '.')))) {
           newRow[key] = convertDecimal(newRow[key]);
         }
       });
@@ -270,14 +294,24 @@ export async function parseParticleFile(file: File): Promise<{
     
     // Combine data_table & chart_table side-by-side
     logger.debug("Combining data and chart tables");
-    const combinedTable = dataTable.map((row, idx) => {
-      if (idx >= chartTable.length) return row;
+    const combinedTable: Record<string, any>[] = [];
+    
+    // Match rows by Label_OU_SR / rowKey
+    for (const dataRow of dataTable) {
+      const labelValue = String(dataRow["Label_OU_SR"] || "");
+      const matchingChartRow = chartTable.find(row => row.rowKey === labelValue);
       
-      return {
-        ...row,
-        ...chartTable[idx]
-      };
-    });
+      const combinedRow = { ...dataRow };
+      if (matchingChartRow) {
+        Object.entries(matchingChartRow).forEach(([key, value]) => {
+          if (key !== "rowKey") {
+            combinedRow[key] = value;
+          }
+        });
+      }
+      
+      combinedTable.push(combinedRow);
+    }
     
     // Apply text extraction for labels
     logger.debug("Extracting and formatting label information");

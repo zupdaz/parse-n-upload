@@ -125,7 +125,7 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
               </p>
             )}
             
-            {job.status === "completed" && job.parsedData && (
+            {job.status === "completed" && job.parsedData && job.parsedData.length > 0 && (
               <div className="mt-2">
                 <button
                   onClick={() => toggleJobExpansion(job.id)}
@@ -148,9 +148,11 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
                       <tbody>
                         {job.parsedData.slice(0, 10).map((row, idx) => (
                           <tr key={idx} className="border-b border-muted">
-                            {Object.values(row).slice(0, 5).map((value: any, i) => (
-                              <td key={i} className="px-2 py-1 truncate max-w-[150px]">
-                                {typeof value === 'object' ? JSON.stringify(value).substring(0, 30) : String(value)}
+                            {Object.keys(row).slice(0, 5).map((key) => (
+                              <td key={key} className="px-2 py-1 truncate max-w-[150px]">
+                                {typeof row[key] === 'object' 
+                                  ? JSON.stringify(row[key]).substring(0, 30) 
+                                  : String(row[key] || '')}
                               </td>
                             ))}
                           </tr>
