@@ -1,12 +1,12 @@
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { AppLayout } from "@/layouts/AppLayout";
 import { ProjectSelector } from "@/components/ProjectSelector";
 import { FileUploader } from "@/components/FileUploader";
 import { UploadProgress } from "@/components/UploadProgress";
 import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
 import { ErrorReportDialog } from "@/components/ErrorReportDialog";
-import useFileUpload from "@/hooks/use-file-upload";
+import useFileUpload, { ParseError } from "@/hooks/use-file-upload";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,7 +20,6 @@ import {
   Trash2,
   Check,
   RefreshCw,
-  InfoIcon
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -32,17 +31,10 @@ const Index = () => {
     uploadFiles, 
     clearCompletedJobs, 
     clearAllJobs,
+    parseErrors,
     currentError,
     setCurrentError
   } = useFileUpload();
-
-  useEffect(() => {
-    // Inform users about automatic CSV detection on component mount
-    toast.info("CSV Detection Active", {
-      description: "CSV files will automatically be processed as particle size data.",
-      duration: 5000,
-    });
-  }, []);
 
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -65,6 +57,26 @@ const Index = () => {
       toast.success("Upload process completed", {
         description: "All files have been processed successfully.",
       });
+    }
+  };
+  
+  const handleReportError = (fileName: string) => {
+    // Find the error details for this filename
+    const errorDetails = parseErrors.find(err => err.fileName === fileName) || null;
+    
+    if (errorDetails) {
+      setCurrentError(errorDetails);
+    } else {
+      // Fallback if we can't find specific error details
+      const jobWithError = jobs.find(job => job.fileName === fileName && job.status === "failed");
+      if (jobWithError) {
+        const fallbackError: ParseError = {
+          fileName: jobWithError.fileName,
+          message: jobWithError.error || "Unknown parsing error",
+          details: "No detailed error information available."
+        };
+        setCurrentError(fallbackError);
+      }
     }
   };
 
@@ -129,14 +141,6 @@ const Index = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 p-3 text-sm flex items-start space-x-2">
-                <InfoIcon className="h-5 w-5 text-blue-700 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-                <div className="text-blue-700 dark:text-blue-400">
-                  <p className="font-medium">Automatic CSV Detection</p>
-                  <p className="mt-1">CSV files are automatically processed as particle size data files using the CAM parser.</p>
-                </div>
-              </div>
-              
               <FileUploader
                 projectId={selectedProjectId}
                 onFilesSelected={handleFilesSelected}
@@ -156,6 +160,7 @@ const Index = () => {
                   <UploadProgress
                     jobs={jobs}
                     onComplete={handleUploadComplete}
+                    onReportError={handleReportError}
                   />
                 </>
               )}
@@ -163,6 +168,7 @@ const Index = () => {
           </Card>
         </div>
 
+        {/* Error Report Dialog */}
         <ErrorReportDialog 
           open={!!currentError} 
           onOpenChange={(open) => {

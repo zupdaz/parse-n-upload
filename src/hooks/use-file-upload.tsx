@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import { UploadJob } from "@/components/UploadProgress";
 import { parseDissolutionData, parseParticleData, ParseResult } from "@/utils/fileParsers";
-import { parseParticleFile } from "@/services/ParticleParserService";
 
 export interface ParseError {
   fileName: string;
@@ -21,78 +20,33 @@ export function useFileUpload() {
   const [currentError, setCurrentError] = useState<ParseError | null>(null);
   
   // More accurate file type detection based on content
-  const detectFileType = async (file: File): Promise<"dissolution" | "particle" | "cam" | undefined> => {
+  const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
     try {
-      // Automatically categorize CSV files as CAM (particle size files)
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      if (extension === 'csv') {
-        logger.log(`${file.name} automatically categorized as cam (CSV file)`);
-        return "cam";
-      }
-      
       // Read first few lines of the file
-      const chunk = await file.slice(0, 5000).text();
-      const lines = chunk.toLowerCase().split('\n');
-      const joinedLines = lines.join(' ');
+      const chunk = await file.slice(0, 500).text();
+      const firstLines = chunk.split('\n').slice(0, 2).join(' ').toLowerCase();
       
-      logger.log(`Detecting file type for ${file.name}`);
-      
-      // Look for specific CAM particle size indicators - SPAN3 is specific to particle size files
-      if (joinedLines.includes('span3')) {
-        logger.log(`${file.name} detected as cam (found SPAN3)`);
-        return "cam";
-      }
-      
-      // Look for keywords to identify dissolution file type
-      if (joinedLines.includes('vessel') && 
-          (joinedLines.includes('time point') || joinedLines.includes('timepoint'))) {
-        logger.log(`${file.name} detected as dissolution`);
+      // Look for keywords to identify file type
+      if (firstLines.includes('vessel') || firstLines.includes('time point')) {
         return "dissolution";
-      } 
-      
-      // Check for Mastersize particle format (CAM format)
-      if ((joinedLines.includes('comment 1') && joinedLines.includes('comment 2')) || 
-          (joinedLines.includes('x(q3=10.0 %)') || joinedLines.includes('x(q3=50.0 %)'))) {
-        logger.log(`${file.name} detected as cam format (Mastersize format)`);
-        return "cam";
-      }
-      
-      // Check for standard particle format
-      if (joinedLines.includes('batch') && 
-         (joinedLines.includes('d10') || joinedLines.includes('d50') || joinedLines.includes('d90'))) {
-        logger.log(`${file.name} detected as particle (standard format)`);
+      } else if (firstLines.includes('batch') || firstLines.includes('particle') || 
+                 firstLines.includes('d10') || firstLines.includes('d50') || 
+                 firstLines.includes('d90')) {
         return "particle";
       }
       
-      // If can't detect from content, make a guess based on name and extension
+      // If can't detect from content, make a guess based on name
       if (file.name.toLowerCase().includes('diss')) {
-        logger.log(`${file.name} guessed as dissolution based on filename`);
         return "dissolution";
-      } else if (file.name.toLowerCase().includes('part') || 
-                file.name.toLowerCase().includes('size') ||
-                file.name.toLowerCase().includes('gran') ||
-                file.name.toLowerCase().includes('cam') ||
-                extension === 'xlsx' || 
-                extension === 'xlsm') {
-        logger.log(`${file.name} guessed as cam based on filename or extension`);
-        return "cam";
+      } else if (file.name.toLowerCase().includes('part') || file.name.toLowerCase().includes('size')) {
+        return "particle";
       }
       
-      // Default fallback - if in doubt, treat as CAM for CSV files
-      logger.log(`${file.name} could not determine specific type, treating as cam`);
-      return "cam";
+      // Default fallback
+      return Math.random() > 0.5 ? "dissolution" : "particle";
     } catch (error) {
-      logger.error("Error detecting file type:", error);
-      return "cam"; // Default to CAM as a fallback
-    }
-  };
-  
-  // Setup a logger
-  const logger = {
-    log: (message: string) => console.log(`[FileUpload] ${message}`),
-    error: (message: string, error?: any) => {
-      console.error(`[FileUpload] ${message}`);
-      if (error) console.error(error);
+      console.error("Error detecting file type:", error);
+      return Math.random() > 0.5 ? "dissolution" : "particle";
     }
   };
   
@@ -108,74 +62,32 @@ export function useFileUpload() {
     };
   };
   
-  const parseFile = async (file: File, fileType: "dissolution" | "particle" | "cam" | undefined): Promise<ParseResult<any>> => {
+  const parseFile = async (file: File, fileType: "dissolution" | "particle" | undefined): Promise<ParseResult<any>> => {
     try {
-      logger.log(`Parsing ${file.name} as ${fileType || 'unknown'} type`);
+      const content = await file.text();
       
       if (fileType === "dissolution") {
-        logger.log(`Using dissolution parser for ${file.name}`);
-        return parseDissolutionData(await file.text());
-      } else if (fileType === "cam") {
-        logger.log(`Using CAM parser for ${file.name}`);
-        // Use the JavaScript CAM parser (polarjs equivalent)
-        const result = await parseParticleFile(file);
-        logger.log(`CAM parser result: success=${result.success}, dataLength=${result.data?.length || 0}`);
-        return result;
+        return parseDissolutionData(content);
       } else if (fileType === "particle") {
-        logger.log(`Using standard JS particle parser for ${file.name}`);
-        // Use the standard JS parser for other particle size formats
-        return parseParticleData(await file.text());
+        return parseParticleData(content);
       } else {
         // Try both parsers if type is not determined
-        logger.log(`Trying multiple parsers for ${file.name}`);
-        try {
-          // First try CAM parser since it's our preferred format
-          logger.log(`${file.name} trying CAM parser first`);
-          const result = await parseParticleFile(file);
-          if (result.success) {
-            return result;
-          }
-          
-          // Then try dissolution parser
-          const fileText = await file.text();
-          const dissResult = parseDissolutionData(fileText);
-          if (dissResult.success) {
-            return dissResult;
-          }
-          
-          // Finally try standard particle parser
-          const partResult = parseParticleData(fileText);
-          if (partResult.success) {
-            return partResult;
-          }
-          
-          // If all fail, check for specific error patterns to provide better guidance
-          if (dissResult.error?.message?.includes("No 'Vessel' columns")) {
-            return {
-              success: false,
-              error: {
-                message: "This doesn't appear to be a dissolution file",
-                details: "The file is missing vessel columns. Trying to parse as a particle size file also failed. Please check the file format."
-              }
-            };
-          }
-          
-          // If both fail, return the more detailed error
-          return dissResult.error?.details.length > (partResult.error?.details.length || 0) 
-            ? dissResult 
-            : partResult;
-        } catch (error: any) {
-          return {
-            success: false,
-            error: {
-              message: "All parsing methods failed",
-              details: error.toString()
-            }
-          };
+        const dissResult = parseDissolutionData(content);
+        if (dissResult.success) {
+          return dissResult;
         }
+        
+        const partResult = parseParticleData(content);
+        if (partResult.success) {
+          return partResult;
+        }
+        
+        // If both fail, return the more detailed error
+        return dissResult.error?.details.length > (partResult.error?.details.length || 0) 
+          ? dissResult 
+          : partResult;
       }
     } catch (error: any) {
-      logger.error(`Error parsing ${file.name}:`, error);
       return {
         success: false,
         error: {
@@ -223,21 +135,14 @@ export function useFileUpload() {
         const parseResult = await parseFile(file, job.fileType);
         
         if (parseResult.success) {
-          // Update job status to completed with the parsed data
+          // Update job status to completed
           setJobs(prev => 
             prev.map(j => 
               j.id === job.id 
-                ? { 
-                    ...j, 
-                    status: "completed" as const, 
-                    progress: 100,
-                    parsedData: parseResult.data
-                  } 
+                ? { ...j, status: "completed" as const, progress: 100 } 
                 : j
             )
           );
-          
-          logger.log(`Successfully parsed ${file.name}, found ${parseResult.data?.length || 0} data points`);
         } else {
           // Handle parse error
           const errorDetails: ParseError = {
@@ -274,7 +179,6 @@ export function useFileUpload() {
           });
         }
       } catch (error) {
-        logger.error(`Error processing ${file.name}:`, error);
         // Simulate occasional failures
         setJobs(prev => 
           prev.map(j => 

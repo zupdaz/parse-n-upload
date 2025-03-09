@@ -41,7 +41,7 @@ export function FileUploader({
       const file = files[i];
       const extension = file.name.split('.').pop()?.toLowerCase();
       
-      if (extension === 'csv' || extension === 'xlsx' || extension === 'xlsm' || extension === 'txt') {
+      if (extension === 'csv' || extension === 'xlsx' || extension === 'xlsm') {
         validFiles.push(file);
       } else {
         invalidFiles.push(file.name);
@@ -50,7 +50,7 @@ export function FileUploader({
     
     if (invalidFiles.length > 0) {
       toast.error("Invalid file format", {
-        description: `Only CSV, XLSX, XLSM, and TXT files are supported. Invalid files: ${invalidFiles.join(', ')}`
+        description: `Only CSV, XLSX, and XLSM files are supported. Invalid files: ${invalidFiles.join(', ')}`
       });
     }
     
@@ -126,7 +126,7 @@ export function FileUploader({
         id="file-upload"
         multiple
         onChange={handleChange}
-        accept=".csv,.xlsx,.xlsm,.txt"
+        accept=".csv,.xlsx,.xlsm"
         className="hidden"
         disabled={disabled || !projectId}
       />

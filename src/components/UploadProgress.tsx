@@ -5,9 +5,11 @@ import {
   Clock,
   Loader2,
   AlertCircle,
-  FileType
+  FileType,
+  Mail
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type JobStatus = "queued" | "processing" | "completed" | "failed";
@@ -17,20 +19,20 @@ export interface UploadJob {
   fileName: string;
   status: JobStatus;
   progress: number;
-  fileType?: "dissolution" | "particle" | "cam";
+  fileType?: "dissolution" | "particle";
   error?: string;
   createdAt: Date;
-  parsedData?: any[];
 }
 
 interface UploadProgressProps {
   jobs: UploadJob[];
   onComplete?: () => void;
+  onReportError?: (fileName: string) => void;
 }
 
-export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
+export function UploadProgress({ jobs, onComplete, onReportError }: UploadProgressProps) {
   const [completedCount, setCompletedCount] = useState(0);
-  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const failedJobs = jobs.filter(job => job.status === "failed");
   
   useEffect(() => {
     const completed = jobs.filter(
@@ -61,16 +63,8 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
     }
   };
 
-  const getFileTypeIcon = (type?: "dissolution" | "particle" | "cam") => {
+  const getFileTypeIcon = (type?: "dissolution" | "particle") => {
     return <FileType className="h-4 w-4 mr-2 text-muted-foreground" />;
-  };
-  
-  const toggleJobExpansion = (jobId: string) => {
-    if (expandedJobId === jobId) {
-      setExpandedJobId(null);
-    } else {
-      setExpandedJobId(jobId);
-    }
   };
 
   return (
@@ -83,6 +77,30 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
       </div>
       
       <Progress value={(completedCount / jobs.length) * 100} className="h-2" />
+      
+      {failedJobs.length > 0 && (
+        <div className="my-4 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              <span className="font-medium text-amber-800 dark:text-amber-300">
+                {failedJobs.length} file{failedJobs.length !== 1 ? 's' : ''} failed parsing
+              </span>
+            </div>
+            {onReportError && (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="bg-white dark:bg-amber-950 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900"
+                onClick={() => onReportError(failedJobs[0].fileName)}
+              >
+                <Mail className="mr-2 h-4 w-4" />
+                Send Report
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       
       <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
         {jobs.map((job) => (
@@ -120,51 +138,20 @@ export function UploadProgress({ jobs, onComplete }: UploadProgressProps) {
             )}
             
             {job.status === "failed" && job.error && (
-              <p className="text-xs text-destructive mt-1">
-                {job.error}
-              </p>
-            )}
-            
-            {job.status === "completed" && job.parsedData && job.parsedData.length > 0 && (
-              <div className="mt-2">
-                <button
-                  onClick={() => toggleJobExpansion(job.id)}
-                  className="text-xs text-primary hover:underline flex items-center"
-                >
-                  {expandedJobId === job.id ? "Hide" : "Show"} parsed data 
-                  ({job.parsedData.length} rows)
-                </button>
-                
-                {expandedJobId === job.id && (
-                  <div className="mt-2 border rounded p-2 bg-muted/20 overflow-auto max-h-48">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b">
-                          {Object.keys(job.parsedData[0] || {}).slice(0, 5).map((key) => (
-                            <th key={key} className="px-2 py-1 text-left font-medium">{key}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {job.parsedData.slice(0, 10).map((row, idx) => (
-                          <tr key={idx} className="border-b border-muted">
-                            {Object.keys(row).slice(0, 5).map((key) => (
-                              <td key={key} className="px-2 py-1 truncate max-w-[150px]">
-                                {typeof row[key] === 'object' 
-                                  ? JSON.stringify(row[key]).substring(0, 30) 
-                                  : String(row[key] || '')}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {job.parsedData.length > 10 && (
-                      <div className="text-center text-xs text-muted-foreground mt-2">
-                        Showing 10 of {job.parsedData.length} rows
-                      </div>
-                    )}
-                  </div>
+              <div className="flex items-center justify-between mt-1">
+                <p className="text-xs text-destructive">
+                  {job.error}
+                </p>
+                {onReportError && (
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => onReportError(job.fileName)}
+                  >
+                    <Mail className="mr-1 h-3 w-3" />
+                    Report
+                  </Button>
                 )}
               </div>
             )}
