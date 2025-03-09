@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -21,19 +20,19 @@ export function useFileUpload() {
   const [currentError, setCurrentError] = useState<ParseError | null>(null);
   
   // More accurate file type detection based on content
-  const detectFileType = async (file: File): Promise<"dissolution" | "particle" | undefined> => {
+  const detectFileType = async (file: File): Promise<"dissolution" | "particle" | "cam" | undefined> => {
     try {
       // Read first few lines of the file
-      const chunk = await file.slice(0, 3000).text();
+      const chunk = await file.slice(0, 5000).text();
       const lines = chunk.toLowerCase().split('\n');
       const joinedLines = lines.join(' ');
       
       console.log(`Detecting file type for ${file.name}`);
       
-      // Look for specific particle size indicators - SPAN3 is specific to particle size files
+      // Look for specific CAM particle size indicators - SPAN3 is specific to particle size files
       if (joinedLines.includes('span3')) {
         console.log(`${file.name} detected as particle (found SPAN3)`);
-        return "particle";
+        return "cam";
       }
       
       // Look for keywords to identify dissolution file type
@@ -43,11 +42,11 @@ export function useFileUpload() {
         return "dissolution";
       } 
       
-      // Check for Mastersize particle format
+      // Check for Mastersize particle format (CAM format)
       if ((joinedLines.includes('comment 1') && joinedLines.includes('comment 2')) || 
           (joinedLines.includes('x(q3=10.0 %)') || joinedLines.includes('x(q3=50.0 %)'))) {
-        console.log(`${file.name} detected as particle (Mastersize format)`);
-        return "particle";
+        console.log(`${file.name} detected as CAM format (Mastersize format)`);
+        return "cam";
       }
       
       // Check for standard particle format
@@ -65,12 +64,12 @@ export function useFileUpload() {
                 file.name.toLowerCase().includes('size') ||
                 file.name.toLowerCase().includes('gran') ||
                 file.name.toLowerCase().includes('cam')) {
-        console.log(`${file.name} guessed as particle based on filename`);
-        return "particle";
+        console.log(`${file.name} guessed as CAM based on filename`);
+        return "cam";
       }
       
       // Default fallback - if in doubt, try both parsers later
-      console.log(`${file.name} could not determine type, will try both parsers`);
+      console.log(`${file.name} could not determine type, will try multiple parsers`);
       return undefined;
     } catch (error) {
       console.error("Error detecting file type:", error);
@@ -78,17 +77,17 @@ export function useFileUpload() {
     }
   };
   
-  const isMastersizeFormat = async (file: File): Promise<boolean> => {
+  const isCAMFormat = async (file: File): Promise<boolean> => {
     try {
-      const chunk = await file.slice(0, 3000).text();
+      const chunk = await file.slice(0, 5000).text();
       const lowerChunk = chunk.toLowerCase();
       
-      // Look for specific Mastersize format indicators or SPAN3
+      // Look for specific CAM/Mastersize format indicators
       return (lowerChunk.includes('comment 1') && lowerChunk.includes('comment 2')) ||
              (lowerChunk.includes('x(q3=') || /size class\s+\[\w+\]/.test(lowerChunk)) ||
              lowerChunk.includes('span3');
     } catch (error) {
-      console.error("Error checking if Mastersize format:", error);
+      console.error("Error checking if CAM format:", error);
       return false;
     }
   };
@@ -105,50 +104,28 @@ export function useFileUpload() {
     };
   };
   
-  const parseFile = async (file: File, fileType: "dissolution" | "particle" | undefined): Promise<ParseResult<any>> => {
+  const parseFile = async (file: File, fileType: "dissolution" | "particle" | "cam" | undefined): Promise<ParseResult<any>> => {
     try {
       console.log(`Parsing ${file.name} as ${fileType || 'unknown'} type`);
       
       if (fileType === "dissolution") {
         console.log(`Using dissolution parser for ${file.name}`);
         return parseDissolutionData(await file.text());
+      } else if (fileType === "cam") {
+        console.log(`Using CAM parser for ${file.name}`);
+        // Use the JavaScript CAM parser
+        return parseParticleFile(file);
       } else if (fileType === "particle") {
-        // Check if this is a Mastersize format file that needs the Python parser
-        const isMastersize = await isMastersizeFormat(file);
-        
-        if (isMastersize) {
-          console.log(`Using Python parser for Mastersize format: ${file.name}`);
-          // Use the Python parser service for Mastersize format
-          const result = await parseParticleFile(file);
-          
-          if (result.success && result.data) {
-            return {
-              success: true,
-              data: result.data
-            };
-          } else {
-            return {
-              success: false,
-              error: {
-                message: result.error?.message || "Unknown parsing error",
-                details: result.error?.details || "No error details available"
-              }
-            };
-          }
-        } else {
-          console.log(`Using standard JS parser for ${file.name}`);
-          // Use the standard JS parser for other particle size formats
-          return parseParticleData(await file.text());
-        }
+        console.log(`Using standard JS particle parser for ${file.name}`);
+        // Use the standard JS parser for other particle size formats
+        return parseParticleData(await file.text());
       } else {
         // Try both parsers if type is not determined
-        console.log(`Trying both parsers for ${file.name}`);
+        console.log(`Trying multiple parsers for ${file.name}`);
         try {
-          const fileText = await file.text();
-          
-          // First check for Mastersize format to use Python parser
-          if (await isMastersizeFormat(file)) {
-            console.log(`${file.name} appears to be Mastersize format, trying Python parser first`);
+          // First check for CAM format
+          if (await isCAMFormat(file)) {
+            console.log(`${file.name} appears to be CAM format, trying CAM parser first`);
             const result = await parseParticleFile(file);
             if (result.success) {
               return result;
@@ -156,6 +133,7 @@ export function useFileUpload() {
           }
           
           // Then try dissolution parser
+          const fileText = await file.text();
           const dissResult = parseDissolutionData(fileText);
           if (dissResult.success) {
             return dissResult;
@@ -173,7 +151,7 @@ export function useFileUpload() {
               success: false,
               error: {
                 message: "This doesn't appear to be a dissolution file",
-                details: "The file is missing vessel columns. Try using the desktop application for particle size files."
+                details: "The file is missing vessel columns. It might be a particle size format we don't recognize."
               }
             };
           }

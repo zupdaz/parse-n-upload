@@ -1,5 +1,4 @@
-
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { AppLayout } from "@/layouts/AppLayout";
 import { ProjectSelector } from "@/components/ProjectSelector";
 import { FileUploader } from "@/components/FileUploader";
@@ -7,7 +6,6 @@ import { UploadProgress } from "@/components/UploadProgress";
 import { SampleFilesDownloader } from "@/components/SampleFilesDownloader";
 import { ErrorReportDialog } from "@/components/ErrorReportDialog";
 import useFileUpload from "@/hooks/use-file-upload";
-import { checkElectronEnvironment } from "@/utils/electronCheck";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -35,11 +33,6 @@ const Index = () => {
     currentError,
     setCurrentError
   } = useFileUpload();
-
-  useEffect(() => {
-    // Check if we're running in electron environment
-    checkElectronEnvironment();
-  }, []);
 
   const handleProjectSelect = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -152,7 +145,6 @@ const Index = () => {
           </Card>
         </div>
 
-        {/* Error Report Dialog */}
         <ErrorReportDialog 
           open={!!currentError} 
           onOpenChange={(open) => {
