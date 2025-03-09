@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
@@ -226,14 +227,21 @@ export function useFileUpload() {
         const parseResult = await parseFile(file, job.fileType);
         
         if (parseResult.success) {
-          // Update job status to completed
+          // Update job status to completed with the parsed data
           setJobs(prev => 
             prev.map(j => 
               j.id === job.id 
-                ? { ...j, status: "completed" as const, progress: 100 } 
+                ? { 
+                    ...j, 
+                    status: "completed" as const, 
+                    progress: 100,
+                    parsedData: parseResult.data
+                  } 
                 : j
             )
           );
+          
+          console.log(`Successfully parsed ${file.name}, found ${parseResult.data?.length || 0} data points`);
         } else {
           // Handle parse error
           const errorDetails: ParseError = {
@@ -270,6 +278,7 @@ export function useFileUpload() {
           });
         }
       } catch (error) {
+        console.error(`Error processing ${file.name}:`, error);
         // Simulate occasional failures
         setJobs(prev => 
           prev.map(j => 

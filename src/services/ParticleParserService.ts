@@ -1,7 +1,128 @@
 
-import { toast } from "sonner";
+import Papa from 'papaparse';
 
-export interface ParticleParsingResult {
+/**
+ * A JavaScript implementation of the CAM particle size file parser
+ * based on the Python implementation.
+ */
+
+// Set up console logging functions for parser
+const logger = {
+  debug: (message: string) => console.debug(`[ParticleParser] ${message}`),
+  info: (message: string) => console.info(`[ParticleParser] ${message}`),
+  warn: (message: string) => console.warn(`[ParticleParser] ${message}`),
+  error: (message: string, error?: any) => {
+    console.error(`[ParticleParser] ${message}`);
+    if (error) console.error(error);
+  }
+};
+
+// Helper function to convert text to UTF-16 if needed
+async function convertToUTF16IfNeeded(file: File): Promise<string> {
+  try {
+    // Try UTF-16 first
+    const arrayBuffer = await file.arrayBuffer();
+    const decoder = new TextDecoder('utf-16le');
+    const text = decoder.decode(arrayBuffer);
+    
+    // Simple heuristic: check if the text contains valid content
+    // UTF-16 files usually have specific markers, so if we see strange chars at the beginning,
+    // it's likely decoded correctly
+    if (text.charAt(0) !== '\uFEFF' && text.length > 0 && !text.startsWith('�')) {
+      logger.info(`File appears to be UTF-16 encoded`);
+      return text;
+    }
+    
+    // Fallback to UTF-8
+    logger.info(`File does not appear to be UTF-16, falling back to UTF-8`);
+    const utf8Decoder = new TextDecoder('utf-8');
+    return utf8Decoder.decode(arrayBuffer);
+  } catch (error) {
+    logger.error(`Error converting file encoding`, error);
+    // Fallback to regular text
+    return await file.text();
+  }
+}
+
+// Parse tab-delimited file to find blank rows
+function findBlankRows(content: string): { blankRowIndices: Record<number, number>, totalRows: number } {
+  logger.debug('Finding blank rows in file');
+  const lines = content.split('\n');
+  let t1Rows = 0;
+  let blankRowCount = 0;
+  const blankRowIndices: Record<number, number> = {};
+
+  for (const line of lines) {
+    t1Rows++;
+    
+    // Check if line is empty or just contains whitespace
+    const trimmedLine = line.trim();
+    if (trimmedLine === '' || !trimmedLine.split('\t')[0]) {
+      blankRowCount++;
+      blankRowIndices[blankRowCount] = t1Rows;
+      logger.debug(`Found blank row #${blankRowCount} at line ${t1Rows}`);
+      
+      if (blankRowCount === 2) {
+        break;
+      }
+    }
+  }
+  
+  return { blankRowIndices, totalRows: t1Rows };
+}
+
+// Parse tab-delimited file into a DataFrame-like structure
+function parseTabDelimited(content: string, options: {
+  skipRows?: number, 
+  nRows?: number,
+  hasHeader?: boolean,
+  indexCol?: number
+} = {}): any[] {
+  const { skipRows = 0, nRows, hasHeader = true, indexCol } = options;
+  
+  // Parse the CSV content
+  const parsed = Papa.parse(content, {
+    delimiter: '\t',
+    skipEmptyLines: true,
+    header: hasHeader
+  });
+  
+  const rows = parsed.data as any[];
+  let result = rows.slice(skipRows, nRows ? skipRows + nRows : undefined);
+  
+  // If indexCol is specified, use it as the index
+  if (indexCol !== undefined && result.length > 0) {
+    const indexed: Record<string, any> = {};
+    for (const row of result) {
+      const indexValue = row[Object.keys(row)[indexCol]];
+      indexed[indexValue] = row;
+    }
+    return indexed;
+  }
+  
+  return result;
+}
+
+// Transpose a matrix (array of arrays)
+function transpose(matrix: any[][]): any[][] {
+  if (matrix.length === 0) return [];
+  
+  return matrix[0].map((_, colIndex) => 
+    matrix.map(row => row[colIndex])
+  );
+}
+
+// Convert comma-separated decimal values to dot notation
+function convertDecimal(value: string): number {
+  if (typeof value === 'number') return value;
+  if (!value) return 0;
+  
+  // Replace comma with dot for decimal notation
+  return parseFloat(value.replace(',', '.'));
+}
+
+// Main parser function
+export async function parseParticleFile(file: File): Promise<{
   success: boolean;
   data?: any[];
   error?: {
@@ -10,354 +131,239 @@ export interface ParticleParsingResult {
     line?: number;
     raw?: string;
   };
-}
-
-export const parseParticleFile = async (file: File): Promise<ParticleParsingResult> => {
+}> {
   try {
-    console.log(`Parsing file ${file.name} for CAM/particle size data`);
+    logger.info(`Starting to parse particle size file: ${file.name}`);
     
-    // Read the file content
-    const fileContent = await file.arrayBuffer();
-    const decoder = new TextDecoder("utf-16");
-    const content = decoder.decode(fileContent);
+    // Read file content with UTF-16 encoding if needed
+    const content = await convertToUTF16IfNeeded(file);
     
-    return parseCAMFile(content, file.name);
-  } catch (error) {
-    console.error("Error in parseParticleFile:", error);
+    // Find blank rows in the file
+    const { blankRowIndices, totalRows } = findBlankRows(content);
     
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return {
-      success: false,
-      error: {
-        message: 'Failed to parse particle file',
-        details: `Error: ${errorMessage}`
-      }
-    };
-  }
-};
-
-export const parseCAMFile = (content: string, fileName: string): ParticleParsingResult => {
-  try {
-    console.log(`Starting to parse CAM file: ${fileName}`);
-    
-    // Split content into lines and handle both CRLF and LF line endings
-    const lines = content.split(/\r?\n/);
-    
-    // Find blank rows (completely empty or with empty first column)
-    let t1Rows = 0;
-    let blankRowCount = 0;
-    const blankRows: Record<number, number> = {};
-    
-    for (let i = 0; i < lines.length; i++) {
-      t1Rows++;
-      const line = lines[i];
-      const columns = line.split('\t');
-      
-      // If line is empty or first column is empty
-      if (!line || !columns[0]) {
-        blankRowCount++;
-        blankRows[blankRowCount] = t1Rows;
-        console.log(`Found blank row #${blankRowCount} at line ${t1Rows}`);
-        
-        // Stop after finding the second blank row
-        if (blankRowCount === 2) {
-          break;
-        }
-      }
-    }
-    
-    // Validate we found two blank rows
-    if (blankRowCount < 2) {
-      const errorMsg = "Could not locate two distinct blank rows in the file";
-      console.error(errorMsg);
+    if (Object.keys(blankRowIndices).length < 2) {
+      const error = "Could not locate two distinct blank rows in the file. Check file format.";
+      logger.error(error);
       return {
         success: false,
         error: {
-          message: 'Invalid file format',
-          details: 'Could not locate two distinct blank rows in the file. Check file format.'
+          message: "Invalid file format",
+          details: error
         }
       };
     }
     
-    const blankRow1 = blankRows[1];
-    const blankRow2 = blankRows[2];
+    const blankRow1 = blankRowIndices[1];
+    const blankRow2 = blankRowIndices[2];
     const numRowsBetweenBlankRows = blankRow2 - blankRow1 - 2;
     
-    console.log(`Blank rows detected at: ${blankRow1} and ${blankRow2}`);
-    console.log(`Number of rows between blank rows: ${numRowsBetweenBlankRows}`);
+    logger.debug(`First blank row at line ${blankRow1}, second at ${blankRow2}`);
+    logger.debug(`Number of rows between blank rows: ${numRowsBetweenBlankRows}`);
     
-    // Read table2 (metadata between the blank rows)
-    const table2Headers: string[] = [];
-    const table2Data: Record<string, Record<string, string>> = {};
+    // Parse the file sections
+    const lines = content.split('\n');
     
-    for (let i = blankRow1; i < blankRow1 + numRowsBetweenBlankRows + 1; i++) {
-      if (i >= lines.length) break;
+    // Create table2 (metadata)
+    logger.debug("Parsing table2 (metadata)");
+    const table2Lines = lines.slice(blankRow1, blankRow1 + numRowsBetweenBlankRows + 1);
+    const table2Content = table2Lines.join('\n');
+    
+    const table2Raw = parseTabDelimited(table2Content, { 
+      hasHeader: false,
+      indexCol: 0
+    });
+    
+    // Transpose table2
+    const table2Keys = Object.keys(table2Raw);
+    const table2Transposed: Record<string, any>[] = [];
+    
+    if (table2Keys.length > 0) {
+      const firstItem = table2Raw[table2Keys[0]];
+      const headerKeys = Object.keys(firstItem);
       
-      const row = lines[i].split('\t');
-      if (row.length < 2) continue;
-      
-      const rowKey = row[0];
-      if (!rowKey) continue;
-      
-      if (i === blankRow1) {
-        // First row contains column headers
-        for (let j = 1; j < row.length; j++) {
-          if (row[j]) {
-            table2Headers.push(row[j]);
-          }
+      for (const key of table2Keys) {
+        const row: Record<string, any> = {};
+        for (const headerKey of headerKeys) {
+          row[headerKey] = table2Raw[key][headerKey];
         }
-      } else {
-        // Data rows
-        for (let j = 1; j < row.length; j++) {
-          const header = table2Headers[j - 1];
-          if (!header) continue;
-          
-          if (!table2Data[header]) {
-            table2Data[header] = {};
-          }
-          
-          table2Data[header][rowKey] = row[j] || '';
-        }
+        table2Transposed.push(row);
       }
     }
     
-    console.log(`Table2 headers: ${table2Headers.join(', ')}`);
+    // Create table3 (measurement data)
+    logger.debug("Parsing table3 (measurement data)");
+    const table3Lines = lines.slice(blankRow2 + 2, blankRow2 + 102); // Maximum 100 rows
+    const table3Content = table3Lines.join('\n');
     
-    // Transpose table2 to match pandas transpose operation
-    const table2Transposed: Record<string, Record<string, string>> = {};
-    for (const header of table2Headers) {
-      const columnData = table2Data[header];
-      if (!columnData) continue;
-      
-      for (const rowKey in columnData) {
-        if (!table2Transposed[header]) {
-          table2Transposed[header] = {};
-        }
-        table2Transposed[header][rowKey] = columnData[rowKey];
-      }
-    }
+    const table3 = parseTabDelimited(table3Content, { hasHeader: false });
     
-    // Read table3 (measurement data after the second blank row)
-    const table3: Record<string, any>[] = [];
-    for (let i = blankRow2 + 2; i < blankRow2 + 102; i++) {
-      if (i >= lines.length) break;
-      
-      const row = lines[i].split('\t');
-      if (row.length < 3) continue;
-      
-      const rowObj: Record<string, any> = {};
-      for (let j = 0; j < row.length; j++) {
-        // Replace comma with dot for decimal values
-        let value = row[j].replace(',', '.');
-        
-        // Try to convert to number if possible
-        const numValue = parseFloat(value);
-        if (!isNaN(numValue)) {
-          value = numValue;
-        }
-        
-        // Store the key as a string for consistency
-        rowObj[j.toString()] = value;
-      }
-      
-      table3.push(rowObj);
-    }
+    // Process tables to create chart data
+    logger.debug("Processing tables to create chart data");
+    const chartData: Record<string, Record<string, number>> = {};
     
-    console.log(`Table3 loaded with ${table3.length} rows`);
-    
-    // Process table data
-    const dataTable: Record<string, any>[] = [];
-    const chartTable: Record<string, any>[] = [];
-    const tmpChartData: Record<string, Record<string, number>> = {};
-    
-    // Process table3 to build chart data
-    for (const rowData of table3) {
-      const colLabel = rowData["1"]; // Column position 1 (second column)
+    // Process rows in table3
+    for (let idx = 0; idx < table3.length; idx++) {
+      const rowData = table3[idx];
+      const rowValues = Object.values(rowData);
+      const colLabel = String(rowValues[1]); // The second column contains the label
       
       // Process data columns starting from the third column
-      for (let j = 2; j < Object.keys(rowData).length; j++) {
-        const fileKey = j.toString();
+      for (let i = 2; i < rowValues.length; i++) {
+        const fileKey = Object.keys(rowData)[i];
         
         try {
-          // Find the Comment 2 value for this file in table2
-          let rowKey = '';
-          for (const header of table2Headers) {
-            if (table2Transposed[header] && table2Transposed[header]['Comment 2']) {
-              rowKey = table2Transposed[header]['Comment 2'];
-              break;
-            }
+          // Get row key from table2 (Comment 2 field)
+          const comment2Value = table2Transposed.find(
+            item => Object.keys(item)[0] === fileKey
+          )?.["Comment 2"];
+          
+          if (!comment2Value) continue;
+          
+          const rowKey = String(comment2Value);
+          const value = convertDecimal(String(rowValues[i]));
+          
+          if (!chartData[rowKey]) {
+            chartData[rowKey] = {};
           }
           
-          if (!rowKey) {
-            console.warn(`Could not find Comment 2 value for file key ${fileKey}`);
-            continue;
-          }
-          
-          const value = parseFloat(rowData[fileKey]);
-          if (isNaN(value)) {
-            console.warn(`Invalid numeric value for ${fileKey}: ${rowData[fileKey]}`);
-            continue;
-          }
-          
-          if (!tmpChartData[rowKey]) {
-            tmpChartData[rowKey] = {};
-          }
-          
-          tmpChartData[rowKey][colLabel] = value;
-        } catch (error) {
-          console.warn('Skipping data point due to error:', error);
+          chartData[rowKey][colLabel] = value;
+        } catch (e) {
+          logger.warn(`Skipping data point due to error at idx=${idx}, i=${i}`, e);
         }
       }
     }
     
-    // Convert tmpChartData to array
-    for (const rowKey in tmpChartData) {
-      const row: Record<string, any> = { ...tmpChartData[rowKey], '0.1': 0.00 };
-      chartTable.push(row);
-    }
+    // Create chart table from chart data
+    const chartTable: Record<string, any>[] = Object.keys(chartData).map(key => {
+      return { 
+        rowKey: key,
+        "0.1": 0.00,
+        ...chartData[key]
+      };
+    });
     
-    console.log(`Chart table created with ${chartTable.length} rows`);
-    
-    // Process table2Transposed to dataTable
-    for (const header of table2Headers) {
-      const columnData = table2Transposed[header];
-      if (!columnData) continue;
+    // Process table2 into data table
+    logger.debug("Processing metadata table");
+    const dataTable = table2Transposed.map(row => {
+      const newRow: Record<string, any> = {};
       
-      const row: Record<string, any> = {};
-      for (const key in columnData) {
-        let value = columnData[key];
-        
-        // Convert numeric values
-        if (key !== 'Comment 1' && key !== 'Comment 2') {
-          const numValue = parseFloat(value.replace(',', '.'));
-          if (!isNaN(numValue)) {
-            value = numValue;
-          }
+      // Convert keys to proper column names
+      Object.entries(row).forEach(([key, value]) => {
+        if (key === "Comment 1") {
+          newRow["MRA_no"] = value;
+        } else if (key === "Comment 2") {
+          newRow["Label_OU_SR"] = value;
+        } else {
+          newRow[key] = value;
         }
-        
-        row[key] = value;
-      }
+      });
       
-      dataTable.push(row);
-    }
-    
-    console.log(`Data table created with ${dataTable.length} rows`);
-    
-    // Combine dataTable and chartTable
-    const camTable: Record<string, any>[] = [];
-    for (let i = 0; i < Math.max(dataTable.length, chartTable.length); i++) {
-      const row: Record<string, any> = {};
-      
-      // Add data from dataTable
-      if (i < dataTable.length) {
-        for (const key in dataTable[i]) {
-          if (key === 'Comment 1') {
-            row['MRA_no'] = dataTable[i][key];
-          } else if (key === 'Comment 2') {
-            row['Label_OU_SR'] = dataTable[i][key];
-          } else {
-            row[key] = dataTable[i][key];
-          }
+      // Convert numeric columns
+      Object.keys(newRow).slice(2).forEach(key => {
+        if (newRow[key] && typeof newRow[key] === 'string') {
+          newRow[key] = convertDecimal(newRow[key]);
         }
+      });
+      
+      return newRow;
+    });
+    
+    // Combine data_table & chart_table side-by-side
+    logger.debug("Combining data and chart tables");
+    const combinedTable = dataTable.map((row, idx) => {
+      if (idx >= chartTable.length) return row;
+      
+      return {
+        ...row,
+        ...chartTable[idx]
+      };
+    });
+    
+    // Apply text extraction for labels
+    logger.debug("Extracting and formatting label information");
+    const processedTable = combinedTable.map(row => {
+      const newRow = { ...row };
+      
+      // Extract method_short
+      const labelValue = String(row["Label_OU_SR"] || "");
+      const methodShortMatch = /^(M[0-9][;,:]?)(.*)/.exec(labelValue);
+      
+      let methodShort = null;
+      let newLabel = labelValue;
+      
+      if (methodShortMatch) {
+        methodShort = methodShortMatch[1].replace(/[;,:]+$/, "");
+        newLabel = methodShortMatch[2].trim();
       }
       
-      // Add data from chartTable
-      if (i < chartTable.length) {
-        for (const key in chartTable[i]) {
-          row[key] = chartTable[i][key];
-        }
+      newRow["Method_short"] = methodShort;
+      newRow["Label_OU_SR"] = newLabel;
+      
+      // Extract trial and intermediate form
+      const trialMatch = /([^, ]+)[, ]?(.*)/.exec(newLabel);
+      let trial = newLabel;
+      let intermediateForm = "";
+      
+      if (trialMatch) {
+        trial = trialMatch[1];
+        intermediateForm = trialMatch[2].trim();
       }
       
-      camTable.push(row);
-    }
+      newRow["Trial"] = trial;
+      newRow["Intermediate_Form"] = intermediateForm;
+      
+      // Extract batch
+      const batchMatch = /([A-Z]{3}\d{2}-\d[A-Z]\d{0,2})/i.exec(trial);
+      newRow["Batch"] = batchMatch ? batchMatch[1] : trial;
+      
+      return newRow;
+    });
     
-    // Extract and modify Label_OU_SR, inserting new columns
-    const extractMethodShort = (value: string): [string | null, string] => {
-      const pattern = /^(M[0-9][;,:]?)(.*)/;
-      const match = value.match(pattern);
-      if (match) {
-        return [match[1].replace(/[;,:]$/, ''), match[2].trim()];
-      }
-      return [null, value];
-    };
+    // Unpivot the table to get size class data
+    logger.debug("Creating final unpivoted data table");
+    const finalTable: any[] = [];
     
-    const extractTrial = (s: string): [string, string] => {
-      const pattern = /([^, ]+)[, ]?(.*)/;
-      const match = s.match(pattern);
-      if (match) {
-        return [match[1], match[2].trim()];
-      }
-      return [s, ''];
-    };
-    
-    const extractTrialWithoutLetter = (s: string): string => {
-      const pattern = /([A-Z]{3}\d{2}-\d[A-Z]\d{0,2})/i;
-      const match = s.match(pattern);
-      return match ? match[1] : s;
-    };
-    
-    // Apply the extraction functions to camTable
-    console.log('Applying extraction functions to data');
-    for (const row of camTable) {
-      if (row['Label_OU_SR']) {
-        const [methodShort, labelOuSr] = extractMethodShort(row['Label_OU_SR']);
-        row['Method_short'] = methodShort;
-        row['Label_OU_SR'] = labelOuSr;
+    processedTable.forEach(row => {
+      const idVars = Object.keys(row).filter(key => {
+        // Check if the key is a size class key (numeric)
+        const isNumeric = !isNaN(parseFloat(key));
+        return !isNumeric;
+      });
+      
+      const valueVars = Object.keys(row).filter(key => {
+        // Check if the key is a size class key (numeric)
+        return !isNaN(parseFloat(key));
+      });
+      
+      valueVars.forEach(sizeClass => {
+        const newRow: Record<string, any> = {};
         
-        const [trial, intermediateForm] = extractTrial(row['Label_OU_SR']);
-        row['Trial'] = trial;
-        row['Intermediate_Form'] = intermediateForm;
-        row['Batch'] = extractTrialWithoutLetter(trial);
-      }
-    }
-    
-    // Unpivot the data (melt operation)
-    console.log('Creating unpivoted table');
-    const camTableUnpivot: Record<string, any>[] = [];
-    const sizeClasses = Object.keys(camTable[0] || {}).filter(key => !isNaN(parseFloat(key)));
-    
-    for (const row of camTable) {
-      for (const sizeClass of sizeClasses) {
-        const unpivotRow: Record<string, any> = {};
+        // Add ID variables
+        idVars.forEach(key => {
+          newRow[key] = row[key];
+        });
         
-        // Copy non-size class columns
-        for (const key in row) {
-          if (!sizeClasses.includes(key)) {
-            unpivotRow[key] = row[key];
-          }
-        }
+        // Add value variables
+        newRow["Size_class"] = sizeClass;
+        newRow["Value"] = row[sizeClass];
         
-        // Add size class and value
-        unpivotRow['Size_class'] = sizeClass;
-        unpivotRow['Value'] = row[sizeClass];
-        
-        camTableUnpivot.push(unpivotRow);
-      }
-    }
+        finalTable.push(newRow);
+      });
+    });
     
-    console.log(`Parsing completed successfully, generated ${camTableUnpivot.length} data points`);
-    
+    logger.info(`Parsing completed successfully. Generated ${finalTable.length} data points.`);
     return {
       success: true,
-      data: camTableUnpivot
+      data: finalTable
     };
-  } catch (error) {
-    console.error('Error parsing CAM file:', error);
-    
-    // Get stack trace for better debugging
-    let errorDetails = '';
-    if (error instanceof Error) {
-      errorDetails = `${error.message}\n${error.stack}`;
-    } else {
-      errorDetails = String(error);
-    }
-    
+  } catch (error: any) {
+    logger.error(`Error in particle file parser: ${error.message}`, error);
     return {
       success: false,
       error: {
-        message: 'Failed to parse CAM file',
-        details: errorDetails
+        message: error.message || "Unknown parsing error",
+        details: error.stack || "No details available"
       }
     };
   }
-};
+}
